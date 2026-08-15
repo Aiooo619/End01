@@ -231,6 +231,28 @@ def register_commands(bot: StyleBot) -> None:
             ephemeral=True,
         )
 
+    @bot.tree.command(name="pending_images", description="列出等待審核的圖片")
+    @app_commands.describe(style="風格名稱", limit="顯示數量")
+    @app_commands.autocomplete(style=style_autocomplete)
+    async def pending_images(
+        interaction: discord.Interaction,
+        style: str,
+        limit: app_commands.Range[int, 1, 25] = 10,
+    ) -> None:
+        selected = bot.style_by_name(style)
+        if not selected:
+            await interaction.response.send_message("找不到這個風格。", ephemeral=True)
+            return
+        rows = bot.store.pending(selected.style_id, limit)
+        if not rows:
+            await interaction.response.send_message("目前沒有待審核圖片。", ephemeral=True)
+            return
+        lines = [
+            f"`{row['sha256'][:12]}` {row['filename']} ({row['width']}×{row['height']})"
+            for row in rows
+        ]
+        await interaction.response.send_message("\n".join(lines), ephemeral=True)
+
     @bot.tree.command(name="approve_style", description="批准風格的待審核素材")
     @app_commands.describe(style="風格名稱", limit="本次最多批准數量")
     @app_commands.autocomplete(style=style_autocomplete)
@@ -247,6 +269,40 @@ def register_commands(bot: StyleBot) -> None:
         count = bot.store.approve(selected.style_id, limit)
         await interaction.response.send_message(
             f"已批准 **{selected.display_name}** 的 {count} 張素材。", ephemeral=True
+        )
+
+    @bot.tree.command(name="reject_style", description="拒絕風格的待審核素材")
+    @app_commands.describe(style="風格名稱", limit="本次最多拒絕數量")
+    @app_commands.autocomplete(style=style_autocomplete)
+    async def reject_style(
+        interaction: discord.Interaction, style: str, limit: app_commands.Range[int, 1, 500] = 100
+    ) -> None:
+        if not bot.is_allowed(interaction.user.id):
+            await interaction.response.send_message("你沒有使用權限。", ephemeral=True)
+            return
+        selected = bot.style_by_name(style)
+        if not selected:
+            await interaction.response.send_message("找不到這個風格。", ephemeral=True)
+            return
+        count = bot.store.reject(selected.style_id, limit)
+        await interaction.response.send_message(
+            f"已拒絕 **{selected.display_name}** 的 {count} 張素材。", ephemeral=True
+        )
+
+    @bot.tree.context_menu(name="Reject training images")
+    async def reject_training_images(
+        interaction: discord.Interaction, message: discord.Message
+    ) -> None:
+        if not bot.is_allowed(interaction.user.id):
+            await interaction.response.send_message("你沒有使用權限。", ephemeral=True)
+            return
+        selected = bot.style_for_channel(message.channel.id)
+        if not selected:
+            await interaction.response.send_message("這不是已註冊的風格子區。", ephemeral=True)
+            return
+        count = bot.store.reject(selected.style_id, 100, str(message.id))
+        await interaction.response.send_message(
+            f"已拒絕這則訊息中的 {count} 張待審核圖片。", ephemeral=True
         )
 
     @bot.tree.command(name="train_style", description="建立指定風格的訓練工作")

@@ -47,8 +47,14 @@ Available slash commands:
 - `/upload_style` — upload one image and choose its style
 - `/register_style` — register the current forum post/thread as a style
 - `/material_status` — view incoming/approved/rejected counts
+- `/pending_images` — list pending filenames, dimensions, and short hashes
 - `/approve_style` — approve incoming images
+- `/reject_style` — reject incoming images in a batch
 - `/train_style` — create a versioned training queue job
+
+To reject only the images attached to one Discord message, open the message
+context menu and choose **Apps → Reject training images**. Approving an image
+also creates a caption job under `queues/captions/`.
 
 Direct uploads support multiple attachments when the Discord channel ID is
 mapped to a style. Accepted formats are JPEG, PNG, and WebP; the shortest side

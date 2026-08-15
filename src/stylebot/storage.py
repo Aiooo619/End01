@@ -192,10 +192,33 @@ class DatasetStore:
         counts.update({row["status"]: row["count"] for row in rows})
         return counts
 
+    def pending(self, style_id: str, limit: int = 10) -> list[dict[str, str | int]]:
+        with closing(self._connect()) as db, db:
+            rows = db.execute(
+                "SELECT sha256, filename, width, height, discord_message_id FROM images WHERE style_id = ? AND status = 'incoming' ORDER BY created_at LIMIT ?",
+                (style_id, limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def _queue_caption(self, row: sqlite3.Row, destination: Path) -> None:
+        caption_root = self.queue_root / "captions"
+        caption_root.mkdir(parents=True, exist_ok=True)
+        job = {
+            "job_id": f"caption-{row['sha256'][:16]}",
+            "style_id": row["style_id"],
+            "sha256": row["sha256"],
+            "image_path": destination.relative_to(self.settings.data_root).as_posix(),
+            "status": "queued",
+            "created_at": datetime.now(UTC).isoformat(),
+        }
+        (caption_root / f"{job['job_id']}.json").write_text(
+            json.dumps(job, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
     def approve(self, style_id: str, limit: int = 100) -> int:
         with closing(self._connect()) as db, db:
             rows = db.execute(
-                "SELECT sha256, filename, local_path FROM images WHERE style_id = ? AND status = 'incoming' ORDER BY created_at LIMIT ?",
+                "SELECT sha256, style_id, filename, local_path FROM images WHERE style_id = ? AND status = 'incoming' ORDER BY created_at LIMIT ?",
                 (style_id, limit),
             ).fetchall()
             moved: list[tuple[sqlite3.Row, Path]] = []
@@ -214,6 +237,7 @@ class DatasetStore:
                             row["sha256"],
                         ),
                     )
+                    self._queue_caption(row, destination)
             except Exception:
                 for row, destination in reversed(moved):
                     if destination.exists():
@@ -221,6 +245,44 @@ class DatasetStore:
                 raise
         if rows:
             self._event({"event": "images_approved", "style_id": style_id, "count": len(rows)})
+        return len(rows)
+
+    def reject(self, style_id: str, limit: int = 100, message_id: str | None = None) -> int:
+        query = (
+            "SELECT sha256, style_id, filename, local_path FROM images "
+            "WHERE style_id = ? AND status = 'incoming'"
+        )
+        parameters: list[str | int] = [style_id]
+        if message_id is not None:
+            query += " AND discord_message_id = ?"
+            parameters.append(message_id)
+        query += " ORDER BY created_at LIMIT ?"
+        parameters.append(limit)
+        with closing(self._connect()) as db, db:
+            rows = db.execute(query, parameters).fetchall()
+            moved: list[tuple[sqlite3.Row, Path]] = []
+            try:
+                for row in rows:
+                    source = self.settings.data_root / row["local_path"]
+                    destination = self.settings.data_root / "datasets" / style_id / "rejected" / row["filename"]
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.move(source, destination)
+                    moved.append((row, destination))
+                    db.execute(
+                        "UPDATE images SET status = 'rejected', local_path = ?, updated_at = ? WHERE sha256 = ?",
+                        (
+                            destination.relative_to(self.settings.data_root).as_posix(),
+                            datetime.now(UTC).isoformat(),
+                            row["sha256"],
+                        ),
+                    )
+            except Exception:
+                for row, destination in reversed(moved):
+                    if destination.exists():
+                        shutil.move(destination, self.settings.data_root / row["local_path"])
+                raise
+        if rows:
+            self._event({"event": "images_rejected", "style_id": style_id, "count": len(rows)})
         return len(rows)
 
     def queue_training(self, style: StyleConfig) -> Path:

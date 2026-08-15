@@ -32,9 +32,11 @@ class DatasetStoreTests(unittest.TestCase):
         self.temp.cleanup()
 
     @staticmethod
-    def image_bytes(size: tuple[int, int] = (1024, 1024)) -> bytes:
+    def image_bytes(
+        size: tuple[int, int] = (1024, 1024), color: str = "#cb9b73"
+    ) -> bytes:
         buffer = io.BytesIO()
-        Image.new("RGB", size, "#cb9b73").save(buffer, "PNG")
+        Image.new("RGB", size, color).save(buffer, "PNG")
         return buffer.getvalue()
 
     def test_ingest_duplicate_approve_and_queue(self) -> None:
@@ -46,7 +48,20 @@ class DatasetStoreTests(unittest.TestCase):
         self.assertEqual(self.store.status("film")["incoming"], 1)
         self.assertEqual(self.store.approve("film"), 1)
         self.assertEqual(self.store.status("film")["approved"], 1)
+        self.assertEqual(len(list((self.root / "queues" / "captions").glob("*.json"))), 1)
         self.assertTrue(self.store.queue_training(self.style).exists())
+
+    def test_pending_and_reject_by_message(self) -> None:
+        self.store.ingest(
+            self.style, self.image_bytes(color="#000000"), "black.png", "reject-me", "u1"
+        )
+        self.store.ingest(
+            self.style, self.image_bytes(color="#ffffff"), "white.png", "keep-me", "u1"
+        )
+        self.assertEqual(len(self.store.pending("film")), 2)
+        self.assertEqual(self.store.reject("film", message_id="reject-me"), 1)
+        self.assertEqual(self.store.status("film")["rejected"], 1)
+        self.assertEqual(self.store.status("film")["incoming"], 1)
 
     def test_rejects_small_image(self) -> None:
         with self.assertRaises(IngestError):
