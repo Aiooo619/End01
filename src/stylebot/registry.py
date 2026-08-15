@@ -85,6 +85,32 @@ class ModelRegistry:
                     status TEXT NOT NULL,
                     created_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS comparison_sessions (
+                    session_id TEXT PRIMARY KEY,
+                    style_id TEXT NOT NULL,
+                    version TEXT NOT NULL,
+                    prompt TEXT NOT NULL,
+                    negative_prompt TEXT NOT NULL,
+                    seed INTEGER NOT NULL,
+                    status TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS comparison_candidates (
+                    session_id TEXT NOT NULL,
+                    generation_id TEXT NOT NULL UNIQUE,
+                    model_id TEXT NOT NULL,
+                    strength REAL NOT NULL,
+                    selected INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (session_id, generation_id)
+                );
+                CREATE TABLE IF NOT EXISTS candidate_tags (
+                    session_id TEXT NOT NULL,
+                    generation_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    tag TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    UNIQUE (session_id, generation_id, user_id, tag)
+                );
                 """
             )
 
@@ -247,3 +273,89 @@ class ModelRegistry:
                 ),
             )
         return iteration_id
+
+    def create_comparison(
+        self, style_id: str, version: str, prompt: str,
+        negative_prompt: str, seed: int,
+    ) -> str:
+        session_id = f"cmp-{uuid.uuid4().hex[:12]}"
+        with closing(self._connect()) as db, db:
+            db.execute(
+                "INSERT INTO comparison_sessions VALUES (?, ?, ?, ?, ?, ?, 'open', ?)",
+                (session_id, style_id, version, prompt, negative_prompt, seed,
+                 datetime.now(UTC).isoformat()),
+            )
+        return session_id
+
+    def add_comparison_candidate(
+        self, session_id: str, generation_id: str, model_id: str, strength: float,
+    ) -> None:
+        with closing(self._connect()) as db, db:
+            db.execute(
+                "INSERT INTO comparison_candidates VALUES (?, ?, ?, ?, 0)",
+                (session_id, generation_id, model_id, strength),
+            )
+
+    def choose_candidate(self, session_id: str, generation_id: str) -> None:
+        with closing(self._connect()) as db, db:
+            exists = db.execute(
+                "SELECT 1 FROM comparison_candidates WHERE session_id = ? AND generation_id = ?",
+                (session_id, generation_id),
+            ).fetchone()
+            if not exists:
+                raise ValueError("找不到這張候選圖。")
+            db.execute("UPDATE comparison_candidates SET selected = 0 WHERE session_id = ?", (session_id,))
+            db.execute(
+                "UPDATE comparison_candidates SET selected = 1 WHERE session_id = ? AND generation_id = ?",
+                (session_id, generation_id),
+            )
+            db.execute("UPDATE generations SET selected = 1 WHERE generation_id = ?", (generation_id,))
+            db.execute("UPDATE comparison_sessions SET status = 'selected' WHERE session_id = ?", (session_id,))
+
+    def tag_candidate(
+        self, session_id: str, generation_id: str, user_id: str, tag: str,
+    ) -> None:
+        allowed = {
+            "good_design", "good_color", "extra_limbs", "concept_bleeding",
+            "mechanical_sleeves", "bad_pose", "copied_material", "bad_anatomy",
+        }
+        if tag not in allowed:
+            raise ValueError("不支援的缺陷標記。")
+        with closing(self._connect()) as db, db:
+            db.execute(
+                "INSERT OR IGNORE INTO candidate_tags VALUES (?, ?, ?, ?, ?)",
+                (session_id, generation_id, user_id, tag, datetime.now(UTC).isoformat()),
+            )
+
+    def comparison_report(self, style_id: str) -> dict:
+        with closing(self._connect()) as db:
+            sessions = db.execute(
+                "SELECT COUNT(*) AS count FROM comparison_sessions WHERE style_id = ?",
+                (style_id,),
+            ).fetchone()["count"]
+            rows = db.execute(
+                """
+                SELECT c.model_id, c.strength, COUNT(*) AS appearances,
+                       SUM(c.selected) AS wins
+                FROM comparison_candidates c
+                JOIN comparison_sessions s ON s.session_id = c.session_id
+                WHERE s.style_id = ?
+                GROUP BY c.model_id, c.strength
+                ORDER BY wins DESC, appearances DESC
+                """,
+                (style_id,),
+            ).fetchall()
+            tags = db.execute(
+                """
+                SELECT t.tag, COUNT(*) AS count
+                FROM candidate_tags t
+                JOIN comparison_sessions s ON s.session_id = t.session_id
+                WHERE s.style_id = ? GROUP BY t.tag ORDER BY count DESC
+                """,
+                (style_id,),
+            ).fetchall()
+        return {
+            "sessions": sessions,
+            "candidates": [dict(row) for row in rows],
+            "tags": [dict(row) for row in tags],
+        }

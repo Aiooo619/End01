@@ -75,6 +75,34 @@ class ModelRegistryTests(unittest.TestCase):
         checkpoints = {model.checkpoint for model in self.registry.list_models("outfit")}
         self.assertEqual(checkpoints, {"epoch-001", "final"})
 
+    def test_comparison_selection_tags_and_report(self) -> None:
+        model_path = self.settings.data_root / "models" / "outfit" / "v001" / "model.safetensors"
+        model_path.parent.mkdir(parents=True)
+        model_path.write_bytes(b"model")
+        model = self.registry.register_model("outfit", "v001", "epoch-006", model_path, "job-1")
+        image = self.settings.data_root / "outputs" / "generated" / "candidate.png"
+        image.parent.mkdir(parents=True)
+        image.write_bytes(b"image")
+        generation_id = self.registry.record_generation(
+            model.model_id, "prompt", "negative", 42, 0.55, image, "comparison"
+        )
+        session_id = self.registry.create_comparison(
+            "outfit", "v001", "prompt", "negative", 42
+        )
+        self.registry.add_comparison_candidate(
+            session_id, generation_id, model.model_id, 0.55
+        )
+        self.registry.choose_candidate(session_id, generation_id)
+        self.registry.tag_candidate(
+            session_id, generation_id, "user-1", "extra_limbs"
+        )
+
+        report = self.registry.comparison_report("outfit")
+
+        self.assertEqual(report["sessions"], 1)
+        self.assertEqual(report["candidates"][0]["wins"], 1)
+        self.assertEqual(report["tags"][0]["tag"], "extra_limbs")
+
 
 if __name__ == "__main__":
     unittest.main()

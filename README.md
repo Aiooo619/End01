@@ -54,6 +54,9 @@ Available slash commands:
 - `/models` — list draft, production, and archived model checkpoints
 - `/review_model` — generate one reproducible review image in a model thread
 - `/review_suite` — run four fixed costume-design review prompts
+- `/iterate_test` — compare four checkpoints with one prompt, seed, and strength
+- `/iteration_report` — show checkpoint win rates and tagged defect counts
+- `/prepare_iteration` — prepare a confirmed next-version plan without starting training
 - `/feedback` — attach categorized feedback to a model or generation
 - `/start_iteration` — record the change plan for the next model version
 - `/promote_model` — publish the selected checkpoint as production

@@ -24,6 +24,87 @@ REVIEW_PROMPTS = (
     "character costume design, androgynous character, asymmetrical outfit, complex silhouette, utility accessories, three-quarter view",
     "character costume design, full body character, alternate color palette, light clothing layers, readable silhouette, plain background",
 )
+ITERATION_NEGATIVE = (
+    "photorealistic, close-up, portrait crop, cropped feet, extra limbs, extra arms, "
+    "extra legs, malformed hands, fused face, fused accessories, duplicate character, "
+    "busy background, text, logo, watermark"
+)
+ISSUE_LABELS = {
+    "good_design": "服裝設計好",
+    "good_color": "配色好",
+    "extra_limbs": "多肢體",
+    "concept_bleeding": "五官／飾品融合",
+    "mechanical_sleeves": "袖子機械化",
+    "bad_pose": "動作錯誤",
+    "copied_material": "太像原始素材",
+    "bad_anatomy": "人體結構錯誤",
+}
+
+
+class CandidateIssueSelect(discord.ui.Select):
+    def __init__(self, bot: "StyleBot", session_id: str, generation_id: str):
+        self.style_bot = bot
+        self.session_id = session_id
+        self.generation_id = generation_id
+        super().__init__(
+            placeholder="標記這張圖的優點或問題",
+            min_values=1,
+            max_values=3,
+            options=[discord.SelectOption(label=label, value=value) for value, label in ISSUE_LABELS.items()],
+        )
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        if not self.style_bot.is_allowed(interaction.user.id):
+            await interaction.response.send_message("你沒有使用權限。", ephemeral=True)
+            return
+        for tag in self.values:
+            self.style_bot.registry.tag_candidate(
+                self.session_id, self.generation_id, str(interaction.user.id), tag
+            )
+        labels = "、".join(ISSUE_LABELS[tag] for tag in self.values)
+        await interaction.response.send_message(f"✅ 已記錄：{labels}", ephemeral=True)
+
+
+class CandidateView(discord.ui.View):
+    def __init__(self, bot: "StyleBot", session_id: str, generation_id: str):
+        super().__init__(timeout=86400)
+        self.style_bot = bot
+        self.session_id = session_id
+        self.generation_id = generation_id
+        self.add_item(CandidateIssueSelect(bot, session_id, generation_id))
+
+    @discord.ui.button(label="選這張", style=discord.ButtonStyle.success)
+    async def choose(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if not self.style_bot.is_allowed(interaction.user.id):
+            await interaction.response.send_message("你沒有使用權限。", ephemeral=True)
+            return
+        self.style_bot.registry.choose_candidate(self.session_id, self.generation_id)
+        await interaction.response.send_message(
+            f"✅ 已選擇 `{self.generation_id}`；同組其他選擇已取消。", ephemeral=True
+        )
+
+
+class PrepareIterationView(discord.ui.View):
+    def __init__(self, bot: "StyleBot", model_id: str, summary: str):
+        super().__init__(timeout=3600)
+        self.style_bot = bot
+        self.model_id = model_id
+        self.summary = summary
+
+    @discord.ui.button(label="確認建立迭代計畫", style=discord.ButtonStyle.primary)
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if not self.style_bot.is_allowed(interaction.user.id):
+            await interaction.response.send_message("你沒有使用權限。", ephemeral=True)
+            return
+        iteration_id = self.style_bot.registry.create_iteration(self.model_id, self.summary)
+        button.disabled = True
+        await interaction.response.edit_message(
+            content=(
+                f"✅ 已建立 `{iteration_id}`。這只建立 v002 計畫，尚未啟動 GPU 訓練；"
+                "完成 caption 清洗後再執行 `/train_style`。"
+            ),
+            view=self,
+        )
 
 
 class StyleBot(commands.Bot):
@@ -433,6 +514,8 @@ def register_commands(bot: StyleBot) -> None:
             f"{style.trigger_token}, character costume design, full body character, "
             "detailed layered outfit, functional accessories, neutral standing pose, simple background"
         )
+        if style.trigger_token.lower() not in prompt.lower():
+            prompt = f"{style.trigger_token}, {prompt}"
         await interaction.response.defer(thinking=True)
         try:
             async with bot.generation_lock:
@@ -440,14 +523,14 @@ def register_commands(bot: StyleBot) -> None:
                     bot.inference.generate,
                     [(record, strength)],
                     prompt,
-                    "",
+                    ITERATION_NEGATIVE,
                     seed,
-                    1024,
+                    768,
                     1024,
                     "review",
                 )
             generation_id = bot.registry.record_generation(
-                record.model_id, prompt, "", result.seed, strength,
+                record.model_id, prompt, ITERATION_NEGATIVE, result.seed, strength,
                 result.image_path, "review"
             )
             message = await interaction.followup.send(
@@ -565,6 +648,139 @@ def register_commands(bot: StyleBot) -> None:
             return
         await interaction.response.send_message(
             f"✅ 已選擇驗收圖片 `{generation_id}`。", ephemeral=True
+        )
+
+    @bot.tree.command(name="iterate_test", description="以相同條件生成四張 checkpoint 候選圖")
+    @app_commands.describe(
+        model="作為基準的模型版本",
+        prompt="建議使用精簡英文提示詞；系統會自動補觸發詞",
+        strength="統一 LoRA 強度",
+        seed="四張圖共用的固定 seed",
+    )
+    @app_commands.autocomplete(model=model_autocomplete)
+    async def iterate_test(
+        interaction: discord.Interaction,
+        model: str,
+        prompt: str,
+        strength: app_commands.Range[float, 0.1, 1.2] = 0.55,
+        seed: int = 42,
+    ) -> None:
+        if not bot.is_allowed(interaction.user.id):
+            await interaction.response.send_message("你沒有使用權限。", ephemeral=True)
+            return
+        parent = bot.registry.get_model(model)
+        if not parent:
+            await interaction.response.send_message("找不到模型。", ephemeral=True)
+            return
+        style = bot.settings.styles.get(parent.style_id)
+        if not style or interaction.channel_id != style.discord_channel_id:
+            await interaction.response.send_message("請在模型所屬子區執行。", ephemeral=True)
+            return
+        clean_prompt = prompt.strip()
+        if not clean_prompt:
+            await interaction.response.send_message("提示詞不能為空。", ephemeral=True)
+            return
+        if style.trigger_token.lower() not in clean_prompt.lower():
+            clean_prompt = f"{style.trigger_token}, {clean_prompt}"
+        candidates = [
+            item for item in bot.registry.list_models(parent.style_id)
+            if item.version == parent.version
+        ]
+        preferred = {"epoch-004": 0, "epoch-006": 1, "epoch-008": 2, "final": 3}
+        candidates.sort(key=lambda item: (preferred.get(item.checkpoint, 99), item.checkpoint))
+        candidates = [item for item in candidates if item.checkpoint in preferred][:4]
+        if len(candidates) < 2:
+            await interaction.response.send_message("同版本至少需要兩個 checkpoint。", ephemeral=True)
+            return
+        session_id = bot.registry.create_comparison(
+            parent.style_id, parent.version, clean_prompt, ITERATION_NEGATIVE, seed
+        )
+        await interaction.response.defer(thinking=True)
+        try:
+            async with bot.generation_lock:
+                for index, candidate in enumerate(candidates, start=1):
+                    result = await asyncio.to_thread(
+                        bot.inference.generate,
+                        [(candidate, strength)], clean_prompt, ITERATION_NEGATIVE,
+                        seed, 768, 1024, "comparison",
+                    )
+                    generation_id = bot.registry.record_generation(
+                        candidate.model_id, clean_prompt, ITERATION_NEGATIVE,
+                        result.seed, strength, result.image_path, "comparison",
+                    )
+                    bot.registry.add_comparison_candidate(
+                        session_id, generation_id, candidate.model_id, strength
+                    )
+                    message = await interaction.followup.send(
+                        content=(
+                            f"候選 {index}/{len(candidates)} · `{candidate.model_id}` · "
+                            f"strength `{strength}` · seed `{seed}`\n"
+                            f"比較組 `{session_id}` · generation `{generation_id}`"
+                        ),
+                        file=discord.File(result.image_path),
+                        view=CandidateView(bot, session_id, generation_id),
+                        wait=True,
+                    )
+                    bot.registry.attach_message(generation_id, str(message.id))
+        except Exception as exc:
+            LOGGER.exception("Iteration comparison failed")
+            await interaction.followup.send(f"候選生成失敗：{str(exc)[-1500:]}", ephemeral=True)
+
+    @bot.tree.command(name="iteration_report", description="查看 checkpoint 勝率與缺陷統計")
+    @app_commands.describe(model="此風格的任一模型")
+    @app_commands.autocomplete(model=model_autocomplete)
+    async def iteration_report(interaction: discord.Interaction, model: str) -> None:
+        record = bot.registry.get_model(model)
+        if not record:
+            await interaction.response.send_message("找不到模型。", ephemeral=True)
+            return
+        report = bot.registry.comparison_report(record.style_id)
+        candidate_lines = []
+        for row in report["candidates"][:8]:
+            rate = (row["wins"] / row["appearances"] * 100) if row["appearances"] else 0
+            candidate_lines.append(
+                f"`{row['model_id']}` · strength {row['strength']:.2f} · "
+                f"{row['wins']}/{row['appearances']} 勝（{rate:.0f}%）"
+            )
+        tag_lines = [f"{ISSUE_LABELS.get(row['tag'], row['tag'])}：{row['count']}" for row in report["tags"]]
+        content = (
+            f"比較組：{report['sessions']}\n\n**候選表現**\n"
+            + ("\n".join(candidate_lines) or "尚無選擇資料")
+            + "\n\n**標記統計**\n"
+            + ("\n".join(tag_lines) or "尚無缺陷標記")
+        )
+        await interaction.response.send_message(content, ephemeral=True)
+
+    @bot.tree.command(name="prepare_iteration", description="根據比較結果準備下一版迭代計畫")
+    @app_commands.describe(model="下一版的父模型")
+    @app_commands.autocomplete(model=model_autocomplete)
+    async def prepare_iteration(interaction: discord.Interaction, model: str) -> None:
+        if not bot.is_allowed(interaction.user.id):
+            await interaction.response.send_message("你沒有使用權限。", ephemeral=True)
+            return
+        record = bot.registry.get_model(model)
+        if not record:
+            await interaction.response.send_message("找不到模型。", ephemeral=True)
+            return
+        report = bot.registry.comparison_report(record.style_id)
+        if report["sessions"] < 1:
+            await interaction.response.send_message("請先完成至少一組 `/iterate_test`。", ephemeral=True)
+            return
+        defects = [
+            ISSUE_LABELS.get(row["tag"], row["tag"])
+            for row in report["tags"]
+            if not row["tag"].startswith("good_")
+        ]
+        summary = (
+            "v002 human-guided iteration: preserve selected clothing/design results; "
+            f"prioritize fixing {', '.join(defects[:5]) or 'caption consistency and anatomy'}; "
+            "clean contradictory captions; use repeats=3, epochs=8, learning_rate=5e-5; "
+            "do not add generated comparison images to the training dataset."
+        )
+        await interaction.response.send_message(
+            f"準備建立以下迭代計畫：\n```{summary}```\n確認後仍不會直接啟動 GPU 訓練。",
+            view=PrepareIterationView(bot, record.model_id, summary),
+            ephemeral=True,
         )
 
     @bot.tree.command(name="generate", description="使用已發布模型直接生圖")
