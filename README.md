@@ -94,6 +94,11 @@ strengths, selections, feedback, and iteration plans are stored in the local
 registry for reproducibility. A pose attachment activates the optional SDXL
 OpenPose ControlNet path instead of training exact poses into a style LoRA.
 
+After training, run `scripts/setup-inference.ps1` once to install the LoRA and
+OpenPose inference dependencies. The bot prefers a materialized local SDXL
+Diffusers model at `models/base/sdxl-base-1.0/`; this avoids Windows symlink
+permission failures and keeps later generations offline-capable.
+
 Direct uploads support multiple attachments when the Discord channel ID is
 mapped to a style. Accepted formats are JPEG, PNG, and WebP; the shortest side
 must be at least 512 pixels.

@@ -5,7 +5,9 @@ import os
 import shutil
 import subprocess
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
+
+UTC = timezone.utc
 from pathlib import Path
 
 import yaml
@@ -178,6 +180,22 @@ class TrainingWorker:
                 path=path,
                 source_job_id=source_job_id,
                 metadata={"output_name": prepared.output_name},
+            )
+            count += 1
+        return count
+
+    def register_job_outputs(self, job_path: Path) -> int:
+        job = json.loads(job_path.read_text(encoding="utf-8"))
+        style_id = job["style_id"]
+        output_dir = Path(job["output_dir"])
+        version = output_dir.name
+        count = 0
+        for path in sorted(output_dir.glob("*.safetensors")):
+            suffix = path.stem.rsplit("-", 1)[-1]
+            checkpoint = f"epoch-{int(suffix):03d}" if suffix.isdigit() else "final"
+            self.registry.register_model(
+                style_id, version, checkpoint, path, job["job_id"],
+                {"output_name": job.get("version", path.stem)},
             )
             count += 1
         return count

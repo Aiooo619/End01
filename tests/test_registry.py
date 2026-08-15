@@ -6,6 +6,7 @@ from pathlib import Path
 
 from stylebot.config import Settings, StyleConfig
 from stylebot.registry import ModelRegistry
+from stylebot.trainer import TrainingWorker
 
 
 class ModelRegistryTests(unittest.TestCase):
@@ -54,6 +55,25 @@ class ModelRegistryTests(unittest.TestCase):
         self.assertTrue(feedback_id)
         iteration_id = self.registry.create_iteration(model.model_id, "增加服飾層次")
         self.assertTrue(iteration_id.startswith("iter-"))
+
+    def test_register_existing_job_outputs(self) -> None:
+        output_dir = self.settings.data_root / "models" / "outfit" / "v001"
+        output_dir.mkdir(parents=True)
+        (output_dir / "outfit_v001-000001.safetensors").write_bytes(b"epoch")
+        (output_dir / "outfit_v001.safetensors").write_bytes(b"final")
+        job_path = self.settings.data_root / "queues" / "job-1.json"
+        job_path.parent.mkdir(parents=True)
+        job_path.write_text(
+            '{"job_id":"job-1","style_id":"outfit","version":"outfit_v001",'
+            f'"output_dir":"{output_dir.as_posix()}"}}',
+            encoding="utf-8",
+        )
+
+        count = TrainingWorker(self.settings).register_job_outputs(job_path)
+
+        self.assertEqual(count, 2)
+        checkpoints = {model.checkpoint for model in self.registry.list_models("outfit")}
+        self.assertEqual(checkpoints, {"epoch-001", "final"})
 
 
 if __name__ == "__main__":

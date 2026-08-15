@@ -1,0 +1,5 @@
+# Installed into work/sd-scripts/venv after the training environment is ready.
+controlnet-aux>=0.0.10,<1
+hf-xet>=1.1,<2
+peft>=0.14,<1
+matplotlib>=3.8,<4

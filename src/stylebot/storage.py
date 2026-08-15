@@ -9,7 +9,9 @@ import sqlite3
 import uuid
 from contextlib import closing
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
+
+UTC = timezone.utc
 from pathlib import Path
 
 from PIL import Image, UnidentifiedImageError

@@ -64,9 +64,15 @@ class InferenceRunner:
         request_root = self.settings.data_root / "queues" / "generation_requests"
         request_root.mkdir(parents=True, exist_ok=True)
         request_path = request_root / f"{request_id}.json"
+        local_base = self.settings.data_root / "models" / "base" / "sdxl-base-1.0"
+        base_model = (
+            local_base.as_posix()
+            if (local_base / "model_index.json").exists()
+            else "stabilityai/stable-diffusion-xl-base-1.0"
+        )
         request = {
             "request_id": request_id,
-            "base_model": "stabilityai/stable-diffusion-xl-base-1.0",
+            "base_model": base_model,
             "adapters": [
                 {
                     "model_id": model.model_id,
@@ -92,6 +98,7 @@ class InferenceRunner:
         environment = os.environ.copy()
         environment["PYTHONPATH"] = str(self.settings.project_root / "src")
         environment["HF_HOME"] = str(self.settings.data_root / "cache" / "huggingface")
+        environment["MPLCONFIGDIR"] = str(self.settings.data_root / "cache" / "matplotlib")
         process = subprocess.run(
             [str(self.python), "-m", "stylebot.generate_main", "--request", str(request_path)],
             cwd=self.settings.project_root,
