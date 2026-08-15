@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 import time
 import urllib.request
@@ -38,6 +39,12 @@ def upload_message(token: str, channel_id: int, content: str, image_path) -> str
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description="Generate a fixed v003 checkpoint comparison")
+    parser.add_argument("--strength", type=float, default=0.5)
+    parser.add_argument("--seed", type=int, default=42)
+    args = parser.parse_args()
+    if not 0.1 <= args.strength <= 1.2:
+        raise SystemExit("strength must be between 0.1 and 1.2")
     settings = load_settings()
     registry = ModelRegistry(settings)
     runner = InferenceRunner(settings)
@@ -50,15 +57,15 @@ def main() -> int:
         "navy and orange accents, simple background, clean anime game illustration"
     )
     style = settings.styles["arknights_portrait"]
-    session_id = registry.create_comparison(style.style_id, "v003", prompt, ITERATION_NEGATIVE, 42)
+    session_id = registry.create_comparison(style.style_id, "v003", prompt, ITERATION_NEGATIVE, args.seed)
     for index, model in enumerate(candidates, start=1):
-        result = runner.generate([(model, 0.5)], prompt, ITERATION_NEGATIVE, 42, 768, 1024, "comparison")
+        result = runner.generate([(model, args.strength)], prompt, ITERATION_NEGATIVE, args.seed, 768, 1024, "comparison")
         generation_id = registry.record_generation(
-            model.model_id, prompt, ITERATION_NEGATIVE, 42, 0.5, result.image_path, "comparison"
+            model.model_id, prompt, ITERATION_NEGATIVE, args.seed, args.strength, result.image_path, "comparison"
         )
-        registry.add_comparison_candidate(session_id, generation_id, model.model_id, 0.5)
+        registry.add_comparison_candidate(session_id, generation_id, model.model_id, args.strength)
         content = (
-                f"v003 候選 {index}/4 · `{model.checkpoint}` · strength `0.5` · seed `42`\n"
+                f"v003 候選 {index}/4 · `{model.checkpoint}` · strength `{args.strength}` · seed `{args.seed}`\n"
                 f"比較組 `{session_id}` · generation `{generation_id}`\n"
                 "請用右鍵／長按 → Apps → Select review image 選最佳圖；也可用 /feedback 記錄問題。"
         )
