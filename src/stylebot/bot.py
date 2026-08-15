@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 import re
 import uuid
@@ -413,13 +414,27 @@ def register_commands(bot: StyleBot) -> None:
         ][:25]
 
     def checkpoint_candidates(parent) -> list:
-        preferred = {"epoch-004": 0, "epoch-006": 1, "epoch-008": 2, "final": 3}
         items = [
             item for item in bot.registry.list_models(parent.style_id)
-            if item.version == parent.version and item.checkpoint in preferred
+            if item.version == parent.version
         ]
-        items.sort(key=lambda item: preferred[item.checkpoint])
-        return items[:4]
+        final = next((item for item in items if item.checkpoint == "final"), None)
+        epochs = sorted(
+            (item for item in items if item.checkpoint.startswith("epoch-")),
+            key=lambda item: int(item.checkpoint.rsplit("-", 1)[-1]),
+        )
+        if not epochs:
+            return [final] if final else []
+        indexes = {
+            min(len(epochs) - 1, max(0, math.ceil(len(epochs) * fraction) - 1))
+            for fraction in (0.25, 0.50, 0.75)
+        }
+        selected = [epochs[index] for index in sorted(indexes)]
+        if final:
+            selected.append(final)
+        elif epochs[-1] not in selected:
+            selected.append(epochs[-1])
+        return selected[:4]
 
     async def run_continuous_generation(
         run_id: str, channel: discord.abc.Messageable, parent,

@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "defaults": {
+    "negative_prompt": "character sheet, lineup, multiple characters, text, logo, cropped feet, extra limbs, malformed hands, fused accessories, photorealistic",
+    "seeds": [42, 619],
+    "width": 768,
+    "height": 1024,
+    "steps": 30,
+    "cfg": 6.5,
+    "lora_strength": 0.5
+  },
+  "prompts": [
+    {
+      "id": "desert_beekeeper",
+      "prompt": "{trigger}, 1boy, solo, full body, standing, young desert beekeeper, layered protective workwear, modular honey collector, yellow and charcoal accents, simple background, clean anime game illustration"
+    },
+    {
+      "id": "underwater_archaeologist",
+      "prompt": "{trigger}, 1girl, solo, full body, standing, underwater archaeologist, layered diving workwear, compact oxygen equipment, white and cyan accents, simple background, clean anime game illustration"
+    },
+    {
+      "id": "alpine_signal_engineer",
+      "prompt": "{trigger}, 1girl, solo, full body, standing, alpine signal engineer, insulated asymmetrical coat, portable antenna tools, navy and orange accents, simple background, clean anime game illustration"
+    },
+    {
+      "id": "wetland_medic",
+      "prompt": "{trigger}, 1boy, solo, full body, standing, wetland field medic, lightweight layered uniform, waterproof medical pouches, gray and lime accents, simple background, clean anime game illustration"
+    }
+  ]
+}

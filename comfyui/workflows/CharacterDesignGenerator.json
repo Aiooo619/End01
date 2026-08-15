@@ -1,0 +1,51 @@
+{
+  "3": {
+    "class_type": "KSampler",
+    "inputs": {
+      "seed": 42,
+      "steps": 30,
+      "cfg": 6.5,
+      "sampler_name": "dpmpp_2m_sde",
+      "scheduler": "karras",
+      "denoise": 1.0,
+      "model": ["10", 0],
+      "positive": ["6", 0],
+      "negative": ["7", 0],
+      "latent_image": ["5", 0]
+    }
+  },
+  "4": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {"ckpt_name": "PUT_ILLUSTRIOUS_XL_MODEL_HERE.safetensors"}
+  },
+  "5": {
+    "class_type": "EmptyLatentImage",
+    "inputs": {"width": 768, "height": 1024, "batch_size": 4}
+  },
+  "6": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "arknights_portrait_style, 1girl, solo, full body, standing, original occupation, layered functional clothing, asymmetric silhouette, modular accessories, simple background, clean anime game illustration",
+      "clip": ["4", 1]
+    }
+  },
+  "7": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "existing game character, character sheet, lineup, text, logo, extra limbs, malformed hands, fused accessories, photorealistic",
+      "clip": ["4", 1]
+    }
+  },
+  "8": {"class_type": "VAEDecode", "inputs": {"samples": ["3", 0], "vae": ["4", 2]}},
+  "9": {"class_type": "SaveImage", "inputs": {"filename_prefix": "CharacterDesign", "images": ["8", 0]}},
+  "10": {
+    "class_type": "LoraLoader",
+    "inputs": {
+      "model": ["4", 0],
+      "clip": ["4", 1],
+      "lora_name": "arknights_portrait/v002/arknights_portrait_v002.safetensors",
+      "strength_model": 0.5,
+      "strength_clip": 0.0
+    }
+  }
+}

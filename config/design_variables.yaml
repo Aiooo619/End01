@@ -1,0 +1,26 @@
+silhouette:
+  - narrow vertical silhouette
+  - wide upper-body silhouette
+  - asymmetric triangular silhouette
+outerwear:
+  - short technical jacket
+  - half cape
+  - oversized field coat
+  - modular utility vest
+layering:
+  - long inner layer with short outer layer
+  - asymmetric overlapping panels
+  - fitted inner suit with loose outerwear
+material:
+  - technical fabric and translucent polymer
+  - matte fabric and brushed metal
+  - waterproof textile and leather straps
+accessory:
+  - waist-mounted tool modules
+  - shoulder-mounted utility pouch
+  - detachable chest harness
+color_accent:
+  - lime green accent
+  - safety orange accent
+  - cyan accent
+  - muted red accent

@@ -111,3 +111,13 @@ must be at least 512 pixels.
 For forum mode, set `DISCORD_FORUM_CHANNEL_ID` or use
 `config/runtime.local.yaml`. Each forum post is a thread and maps to one style.
 New posts can be registered from inside the post with `/register_style`.
+
+## Character Design AI V1 / ComfyUI
+
+The project now includes an isolated official ComfyUI runtime setup, fixed
+out-of-dataset evaluation prompts, random design-variable definitions, and a
+four-image character-design workflow skeleton. See `docs/V1_UPGRADE.md`.
+
+Run `scripts/setup-comfyui.ps1`, then `scripts/start-comfyui.ps1`. The local UI
+listens only on `http://127.0.0.1:8188`. Base-model weights are intentionally not
+stored in Git.
