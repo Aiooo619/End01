@@ -278,6 +278,25 @@ class DatasetStore:
             self._event({"event": "images_approved", "style_id": style_id, "count": len(rows)})
         return len(rows)
 
+    def approve_one(self, style_id: str, sha256: str) -> int:
+        with closing(self._connect()) as db, db:
+            row = db.execute(
+                "SELECT sha256, style_id, filename, local_path FROM images WHERE style_id = ? AND sha256 = ? AND status = 'incoming'",
+                (style_id, sha256),
+            ).fetchone()
+            if not row:
+                return 0
+            source = self.settings.data_root / row["local_path"]
+            destination = self.settings.data_root / "datasets" / style_id / "approved" / row["filename"]
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(source, destination)
+            db.execute(
+                "UPDATE images SET status = 'approved', local_path = ?, updated_at = ? WHERE sha256 = ?",
+                (destination.relative_to(self.settings.data_root).as_posix(), datetime.now(UTC).isoformat(), sha256),
+            )
+        self._event({"event": "image_approved", "style_id": style_id, "sha256": sha256})
+        return 1
+
     def reject(self, style_id: str, limit: int = 100, message_id: str | None = None) -> int:
         query = (
             "SELECT sha256, style_id, filename, local_path FROM images "

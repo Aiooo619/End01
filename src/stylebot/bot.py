@@ -15,6 +15,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from .config import Settings, StyleConfig
+from .arknights_curator import accept_record, update_record
 from .inference import InferenceRunner
 from .registry import ModelRegistry
 from .storage import DatasetStore, IngestError
@@ -134,6 +135,87 @@ class PrepareIterationView(discord.ui.View):
         )
 
 
+class CurationModal(discord.ui.Modal, title="確認角色與服裝標註"):
+    form = discord.ui.TextInput(label="角色／形態是否正確", max_length=100)
+    structure = discord.ui.TextInput(label="主要服裝結構", style=discord.TextStyle.paragraph, max_length=500)
+    materials = discord.ui.TextInput(label="材質與配件", style=discord.TextStyle.paragraph, max_length=500)
+    notes = discord.ui.TextInput(label="排除內容或修正備註", style=discord.TextStyle.paragraph, required=False, max_length=500)
+
+    def __init__(self, bot: "StyleBot", record: dict, focus: str):
+        super().__init__()
+        self.style_bot = bot
+        self.record = record
+        self.focus = focus
+        self.form.default = record["preferred"]
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        if not self.style_bot.is_allowed(interaction.user.id):
+            await interaction.response.send_message("你沒有使用權限。", ephemeral=True)
+            return
+        style = self.style_bot.settings.styles["arknights_portrait"]
+        source = (
+            self.style_bot.settings.project_root / "datasets" / "arknights_top50" /
+            "curation" / self.record["filename"]
+        )
+        result = self.style_bot.store.ingest(
+            style, source.read_bytes(), self.record["filename"],
+            str(interaction.message.id), str(interaction.user.id),
+        )
+        self.style_bot.store.approve_one(style.style_id, result.sha256)
+        accept_record(
+            self.style_bot.settings.project_root,
+            self.record["rank"],
+            {
+                "form": str(self.form), "structure": str(self.structure),
+                "materials": str(self.materials), "notes": str(self.notes), "focus": self.focus,
+            }, result.filename,
+        )
+        await interaction.response.edit_message(
+            content=f"✅ **#{self.record['rank']} {self.record['group']}** 已確認並寫入 caption／審核文檔。",
+            attachments=[], view=None,
+        )
+
+
+class CurationFocusSelect(discord.ui.Select):
+    def __init__(self, view: "CurationView"):
+        self.curation_view = view
+        super().__init__(
+            placeholder="先選這張圖最值得學習的部分",
+            options=[
+                discord.SelectOption(label="服裝結構", value="clothing structure"),
+                discord.SelectOption(label="人物輪廓", value="character silhouette"),
+                discord.SelectOption(label="材質與配件", value="materials and accessories"),
+                discord.SelectOption(label="配色系統", value="color system"),
+                discord.SelectOption(label="畫風（次要）", value="art style, secondary priority"),
+            ],
+        )
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        self.curation_view.focus = self.values[0]
+        await interaction.response.send_message(f"已選學習重點：`{self.values[0]}`", ephemeral=True)
+
+
+class CurationView(discord.ui.View):
+    def __init__(self, bot: "StyleBot", record: dict):
+        super().__init__(timeout=604800)
+        self.style_bot = bot
+        self.record = record
+        self.focus = "clothing structure"
+        self.add_item(CurationFocusSelect(self))
+
+    @discord.ui.button(label="確認並填寫標註", style=discord.ButtonStyle.success)
+    async def approve(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await interaction.response.send_modal(CurationModal(self.style_bot, self.record, self.focus))
+
+    @discord.ui.button(label="拒絕此素材", style=discord.ButtonStyle.danger)
+    async def reject(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if not self.style_bot.is_allowed(interaction.user.id):
+            await interaction.response.send_message("你沒有使用權限。", ephemeral=True)
+            return
+        update_record(self.style_bot.settings.project_root, self.record["rank"], status="rejected")
+        await interaction.response.edit_message(content=f"❌ **#{self.record['rank']} {self.record['group']}** 已拒絕。", attachments=[], view=None)
+
+
 class StyleBot(commands.Bot):
     def __init__(self, settings: Settings, store: DatasetStore):
         intents = discord.Intents.default()
@@ -148,6 +230,7 @@ class StyleBot(commands.Bot):
         self.training_jobs: set[str] = set()
         self._training_scan_started = False
         self._synced = False
+        self._curation_started = False
 
     async def setup_hook(self) -> None:
         if self.settings.guild_id:
@@ -164,6 +247,43 @@ class StyleBot(commands.Bot):
         if not self._training_scan_started:
             self._training_scan_started = True
             await self.start_pending_training_monitors()
+        if not self._curation_started:
+            self._curation_started = True
+            task = asyncio.create_task(self.post_pending_curation())
+            self.background_tasks.add(task)
+            task.add_done_callback(self.background_tasks.discard)
+
+    async def post_pending_curation(self) -> None:
+        manifest = self.settings.project_root / "state" / "arknights_top50_curation.json"
+        style = self.settings.styles.get("arknights_portrait")
+        if not manifest.exists() or not style or not style.discord_channel_id:
+            return
+        channel = self.get_channel(style.discord_channel_id) or await self.fetch_channel(style.discord_channel_id)
+        records = json.loads(manifest.read_text(encoding="utf-8"))
+        pending = [item for item in records if item.get("status") == "downloaded"]
+        if not pending:
+            return
+        await channel.send(
+            f"<@{next(iter(self.settings.allowed_user_ids), '')}>\n"
+            f"📚 前 50 人氣角色素材審核開始：已解析 `{len(pending)}` 張。"
+            "請先選學習重點，再按『確認並填寫標註』；未確認素材不會進入訓練。"
+        )
+        root = self.settings.project_root / "datasets" / "arknights_top50" / "curation"
+        for record in pending:
+            flags = []
+            if record.get("collaboration"):
+                flags.append("⚠️ 聯動角色")
+            if record.get("unusual_form"):
+                flags.append("⚠️ 非人形／特殊形態")
+            warning = " · ".join(flags) or "標準角色素材"
+            message = await channel.send(
+                f"**#{record['rank']} {record['group']}** · `{record['preferred']}`\n"
+                f"{warning}\n來源：公開遊戲資源鏡像；請人工確認身份與服裝內容。",
+                file=discord.File(root / record["filename"]),
+                view=CurationView(self, record),
+            )
+            update_record(self.settings.project_root, record["rank"], status="posted", discord_message_id=str(message.id))
+            await asyncio.sleep(1.2)
 
     @staticmethod
     def training_progress(log_path: Path) -> tuple[int, int, float, str, str] | None:

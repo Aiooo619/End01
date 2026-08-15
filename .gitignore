@@ -25,6 +25,7 @@ datasets/**/incoming/**
 datasets/**/approved/**
 datasets/**/rejected/**
 datasets/**/captions/**
+datasets/**/curation/**
 !datasets/.gitkeep
 !datasets/**/.gitkeep
 
