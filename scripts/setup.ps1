@@ -2,8 +2,11 @@ $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $ProjectRoot
 $BundledPython = Join-Path $ProjectRoot "work\python312\python.exe"
+$VenvPython = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
 
-if (Test-Path $BundledPython) {
+if (Test-Path $VenvPython) {
+    Write-Host "Using existing .venv"
+} elseif (Test-Path $BundledPython) {
     & $BundledPython -m venv .venv
 } else {
     $PythonCommand = Get-Command py -ErrorAction SilentlyContinue

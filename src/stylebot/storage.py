@@ -215,6 +215,27 @@ class DatasetStore:
             json.dumps(job, ensure_ascii=False, indent=2), encoding="utf-8"
         )
 
+    def queue_missing_captions(self) -> int:
+        with closing(self._connect()) as db, db:
+            rows = db.execute(
+                "SELECT sha256, style_id, filename, local_path FROM images WHERE status = 'approved' ORDER BY created_at"
+            ).fetchall()
+        queued = 0
+        for row in rows:
+            image_path = self.settings.data_root / row["local_path"]
+            caption_path = (
+                self.settings.data_root
+                / "datasets"
+                / row["style_id"]
+                / "captions"
+                / f"{image_path.stem}.txt"
+            )
+            job_path = self.queue_root / "captions" / f"caption-{row['sha256'][:16]}.json"
+            if not caption_path.exists() and not job_path.exists():
+                self._queue_caption(row, image_path)
+                queued += 1
+        return queued
+
     def approve(self, style_id: str, limit: int = 100) -> int:
         with closing(self._connect()) as db, db:
             rows = db.execute(

@@ -49,6 +49,7 @@ class DatasetStoreTests(unittest.TestCase):
         self.assertEqual(self.store.approve("film"), 1)
         self.assertEqual(self.store.status("film")["approved"], 1)
         self.assertEqual(len(list((self.root / "queues" / "captions").glob("*.json"))), 1)
+        self.assertEqual(self.store.queue_missing_captions(), 0)
         self.assertTrue(self.store.queue_training(self.style).exists())
 
     def test_pending_and_reject_by_message(self) -> None:

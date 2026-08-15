@@ -56,6 +56,13 @@ To reject only the images attached to one Discord message, open the message
 context menu and choose **Apps → Reject training images**. Approving an image
 also creates a caption job under `queues/captions/`.
 
+Run `scripts/run-captioner.ps1` to process approved images with the local
+Apache-2.0 `SmilingWolf/wd-vit-tagger-v3` ONNX model. The first run downloads
+about 379MB; later runs use the local cache. Captions are written to each
+style's `datasets/<style>/captions/` directory and start with its trigger token.
+Use `scripts/start-caption-worker.ps1` to keep a worker running; it scans for
+newly approved images every 15 seconds and captions them automatically.
+
 Direct uploads support multiple attachments when the Discord channel ID is
 mapped to a style. Accepted formats are JPEG, PNG, and WebP; the shortest side
 must be at least 512 pixels.
