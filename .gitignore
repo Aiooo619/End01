@@ -1,0 +1,51 @@
+# Secrets
+.env
+*.token
+*.key
+
+# Python / local environments
+.venv/
+__pycache__/
+*.py[cod]
+
+# Runtime logs and queues
+logs/**
+!logs/.gitkeep
+records/events/**
+!records/events/.gitkeep
+queues/**
+!queues/.gitkeep
+
+# Training images and generated captions
+datasets/**/incoming/**
+datasets/**/approved/**
+datasets/**/rejected/**
+datasets/**/captions/**
+!datasets/.gitkeep
+!datasets/**/.gitkeep
+
+# Models, checkpoints and generated previews
+models/**
+!models/.gitkeep
+outputs/generated/**
+outputs/previews/**
+!outputs/.gitkeep
+!outputs/**/.gitkeep
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+
+# Local databases and caches
+state/**
+!state/.gitkeep
+cache/
+work/
+*.db
+*.sqlite*
+
+# OS / editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

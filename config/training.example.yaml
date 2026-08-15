@@ -1,0 +1,12 @@
+base_model: "stabilityai/stable-diffusion-xl-base-1.0"
+resolution: 1024
+mixed_precision: "bf16"
+gradient_checkpointing: true
+cache_latents: true
+train_unet_only: true
+network_dim: 32
+network_alpha: 16
+batch_size: 1
+save_every_n_epochs: 1
+max_versions_per_style: 10
+
