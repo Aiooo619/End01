@@ -45,6 +45,7 @@ Requirements: Python 3.12 and a Discord application with a bot user.
 Available slash commands:
 
 - `/upload_style` — upload one image and choose its style
+- `/register_style` — register the current forum post/thread as a style
 - `/material_status` — view incoming/approved/rejected counts
 - `/approve_style` — approve incoming images
 - `/train_style` — create a versioned training queue job
@@ -52,3 +53,7 @@ Available slash commands:
 Direct uploads support multiple attachments when the Discord channel ID is
 mapped to a style. Accepted formats are JPEG, PNG, and WebP; the shortest side
 must be at least 512 pixels.
+
+For forum mode, set `DISCORD_FORUM_CHANNEL_ID` or use
+`config/runtime.local.yaml`. Each forum post is a thread and maps to one style.
+New posts can be registered from inside the post with `/register_style`.

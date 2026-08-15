@@ -25,6 +25,7 @@ class Settings:
     data_root: Path
     bot_token: str
     guild_id: int | None
+    forum_channel_id: int | None
     allowed_user_ids: frozenset[int]
     max_attachment_mb: int
     styles: dict[str, StyleConfig]
@@ -45,9 +46,14 @@ def load_settings(project_root: Path | None = None) -> Settings:
     root = (project_root or Path(__file__).resolve().parents[2]).resolve()
     load_dotenv(root / ".env")
 
-    styles_path = root / "config" / "styles.yaml"
+    styles_path = root / "config" / "styles.local.yaml"
+    if not styles_path.exists():
+        styles_path = root / "config" / "styles.yaml"
     if not styles_path.exists():
         styles_path = root / "config" / "styles.example.yaml"
+
+    runtime_path = root / "config" / "runtime.local.yaml"
+    runtime = _load_yaml(runtime_path) if runtime_path.exists() else {}
 
     raw_styles = _load_yaml(styles_path).get("styles", {})
     styles: dict[str, StyleConfig] = {}
@@ -63,9 +69,10 @@ def load_settings(project_root: Path | None = None) -> Settings:
         if style.enabled:
             styles[style_id] = style
 
+    allowed_value = str(runtime.get("allowed_user_ids", os.getenv("DISCORD_ALLOWED_USER_IDS", "")))
     allowed = frozenset(
         int(part.strip())
-        for part in os.getenv("DISCORD_ALLOWED_USER_IDS", "").split(",")
+        for part in allowed_value.split(",")
         if part.strip()
     )
     data_root_value = os.getenv("AI_STYLE_DATA_ROOT", "").strip()
@@ -75,9 +82,11 @@ def load_settings(project_root: Path | None = None) -> Settings:
         project_root=root,
         data_root=data_root,
         bot_token=os.getenv("DISCORD_BOT_TOKEN", "").strip(),
-        guild_id=_optional_int(os.getenv("DISCORD_GUILD_ID")),
+        guild_id=_optional_int(runtime.get("guild_id", os.getenv("DISCORD_GUILD_ID"))),
+        forum_channel_id=_optional_int(
+            runtime.get("forum_channel_id", os.getenv("DISCORD_FORUM_CHANNEL_ID"))
+        ),
         allowed_user_ids=allowed,
         max_attachment_mb=int(os.getenv("MAX_ATTACHMENT_MB", "25")),
         styles=styles,
     )
-

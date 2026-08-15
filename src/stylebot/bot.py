@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import logging
+import re
 
 import discord
+import yaml
 from discord import app_commands
 from discord.ext import commands
 
@@ -44,6 +46,59 @@ class StyleBot(commands.Bot):
             None,
         )
 
+    def is_style_forum_thread(self, channel: object) -> bool:
+        return (
+            isinstance(channel, discord.Thread)
+            and self.settings.forum_channel_id is not None
+            and channel.parent_id == self.settings.forum_channel_id
+        )
+
+    def register_thread_style(
+        self,
+        thread_id: int,
+        style_id: str,
+        display_name: str,
+        minimum_approved_images: int,
+    ) -> StyleConfig:
+        normalized = re.sub(r"[^a-z0-9_-]+", "_", style_id.strip().lower()).strip("_")
+        if not normalized:
+            raise IngestError("style_id 只能使用小寫英文字母、數字、底線或連字號。")
+        if any(
+            item.discord_channel_id == thread_id and item.style_id != normalized
+            for item in self.settings.styles.values()
+        ):
+            raise IngestError("這個子區已註冊為另一個風格。")
+        style = StyleConfig(
+            style_id=normalized,
+            display_name=display_name.strip() or normalized,
+            discord_channel_id=thread_id,
+            trigger_token=f"{normalized}_style",
+            minimum_approved_images=minimum_approved_images,
+            enabled=True,
+        )
+        self.settings.styles[normalized] = style
+        path = self.settings.project_root / "config" / "styles.local.yaml"
+        payload = {
+            "styles": {
+                item.style_id: {
+                    "display_name": item.display_name,
+                    "discord_channel_id": str(item.discord_channel_id or ""),
+                    "trigger_token": item.trigger_token,
+                    "minimum_approved_images": item.minimum_approved_images,
+                    "enabled": item.enabled,
+                }
+                for item in self.settings.styles.values()
+            }
+        }
+        path.write_text(
+            yaml.safe_dump(payload, allow_unicode=True, sort_keys=False), encoding="utf-8"
+        )
+        for bucket in ("incoming", "approved", "rejected", "captions"):
+            (self.settings.data_root / "datasets" / normalized / bucket).mkdir(
+                parents=True, exist_ok=True
+            )
+        return style
+
     def style_by_name(self, value: str) -> StyleConfig | None:
         normalized = value.strip().casefold()
         return next(
@@ -83,6 +138,10 @@ class StyleBot(commands.Bot):
             return
         style = self.style_for_channel(message.channel.id)
         if not style:
+            if self.is_style_forum_thread(message.channel):
+                await message.reply(
+                    "這個子區尚未註冊。請先執行 `/register_style`。", mention_author=False
+                )
             return
         responses = [
             await self.ingest_attachment(style, item, str(message.id), str(message.author.id))
@@ -121,6 +180,42 @@ def register_commands(bot: StyleBot) -> None:
             selected, image, str(interaction.id), str(interaction.user.id)
         )
         await interaction.followup.send(result, ephemeral=True)
+
+    @bot.tree.command(name="register_style", description="將目前論壇子區註冊為一個新風格")
+    @app_commands.describe(
+        style_id="資料夾識別名稱，例如 arknights_portrait",
+        display_name="顯示名稱；留空時使用目前子區名稱",
+        minimum_images="允許建立訓練工作的最低圖片數",
+    )
+    async def register_style(
+        interaction: discord.Interaction,
+        style_id: str,
+        display_name: str = "",
+        minimum_images: app_commands.Range[int, 1, 1000] = 50,
+    ) -> None:
+        if not bot.is_allowed(interaction.user.id):
+            await interaction.response.send_message("你沒有使用權限。", ephemeral=True)
+            return
+        channel = interaction.channel
+        if channel is None or not bot.is_style_forum_thread(channel):
+            await interaction.response.send_message(
+                "這個指令只能在設定的訓練論壇子區內使用。", ephemeral=True
+            )
+            return
+        try:
+            style = bot.register_thread_style(
+                channel.id,
+                style_id,
+                display_name or getattr(channel, "name", style_id),
+                minimum_images,
+            )
+        except IngestError as exc:
+            await interaction.response.send_message(str(exc), ephemeral=True)
+            return
+        await interaction.response.send_message(
+            f"✅ 此子區已註冊為 **{style.display_name}** (`{style.style_id}`)。",
+            ephemeral=True,
+        )
 
     @bot.tree.command(name="material_status", description="查看風格素材數量")
     @app_commands.describe(style="風格名稱")
@@ -180,4 +275,3 @@ def create_bot(settings: Settings) -> StyleBot:
     bot = StyleBot(settings, store)
     register_commands(bot)
     return bot
-

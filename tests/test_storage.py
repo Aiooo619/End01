@@ -21,6 +21,7 @@ class DatasetStoreTests(unittest.TestCase):
             data_root=self.root,
             bot_token="test",
             guild_id=None,
+            forum_channel_id=None,
             allowed_user_ids=frozenset(),
             max_attachment_mb=25,
             styles={"film": self.style},
@@ -54,4 +55,3 @@ class DatasetStoreTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
