@@ -55,6 +55,8 @@ Available slash commands:
 - `/review_model` — generate one reproducible review image in a model thread
 - `/review_suite` — run four fixed costume-design review prompts
 - `/iterate_test` — compare four checkpoints with one prompt, seed, and strength
+- `/iterate_auto` — continuously generate bounded multi-round checkpoint comparisons
+- `/stop_iteration` — safely stop continuous comparisons after the current image
 - `/iteration_report` — show checkpoint win rates and tagged defect counts
 - `/prepare_iteration` — prepare a confirmed next-version plan without starting training
 - `/feedback` — attach categorized feedback to a model or generation

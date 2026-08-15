@@ -32,13 +32,37 @@ ITERATION_NEGATIVE = (
 ISSUE_LABELS = {
     "good_design": "服裝設計好",
     "good_color": "配色好",
+    "good_anatomy": "人體結構穩定",
+    "good_silhouette": "人物輪廓清晰",
+    "good_clothing_structure": "服裝結構清楚",
+    "good_materials": "材質表現好",
+    "good_accessories": "配件位置合理",
+    "good_pose": "動作自然",
+    "good_style": "畫風符合",
+    "good_prompt_match": "符合提示詞",
     "extra_limbs": "多肢體",
     "concept_bleeding": "五官／飾品融合",
+    "clothing_fusion": "衣服部件融合",
     "mechanical_sleeves": "袖子機械化",
+    "bad_accessory_placement": "配件位置錯誤",
     "bad_pose": "動作錯誤",
     "copied_material": "太像原始素材",
     "bad_anatomy": "人體結構錯誤",
+    "bad_hands": "手部錯誤",
+    "bad_face": "五官錯誤",
+    "bad_composition": "構圖錯誤",
+    "cropped_body": "身體被裁切",
+    "wrong_style": "畫風不符",
+    "prompt_mismatch": "不符合提示詞",
+    "too_busy": "畫面過度混亂",
 }
+
+
+def estimated_clip_tokens(prompt: str) -> int:
+    cjk = len(re.findall(r"[\u3400-\u9fff]", prompt))
+    latin_words = len(re.findall(r"[A-Za-z0-9_'-]+", prompt))
+    punctuation = len(re.findall(r"[,.;:，。；：]", prompt))
+    return cjk * 2 + latin_words + punctuation
 
 
 class CandidateIssueSelect(discord.ui.Select):
@@ -49,7 +73,7 @@ class CandidateIssueSelect(discord.ui.Select):
         super().__init__(
             placeholder="標記這張圖的優點或問題",
             min_values=1,
-            max_values=3,
+            max_values=5,
             options=[discord.SelectOption(label=label, value=value) for value, label in ISSUE_LABELS.items()],
         )
 
@@ -117,6 +141,7 @@ class StyleBot(commands.Bot):
         self.registry = ModelRegistry(settings)
         self.inference = InferenceRunner(settings)
         self.generation_lock = asyncio.Lock()
+        self.background_tasks: set[asyncio.Task] = set()
         self._synced = False
 
     async def setup_hook(self) -> None:
@@ -287,6 +312,66 @@ def register_commands(bot: StyleBot) -> None:
             for model in bot.registry.list_models(production_only=True)
             if current in model.model_id.casefold()
         ][:25]
+
+    def checkpoint_candidates(parent) -> list:
+        preferred = {"epoch-004": 0, "epoch-006": 1, "epoch-008": 2, "final": 3}
+        items = [
+            item for item in bot.registry.list_models(parent.style_id)
+            if item.version == parent.version and item.checkpoint in preferred
+        ]
+        items.sort(key=lambda item: preferred[item.checkpoint])
+        return items[:4]
+
+    async def run_continuous_generation(
+        run_id: str, channel: discord.abc.Messageable, parent,
+        prompt: str, strength: float, seed: int, rounds: int,
+    ) -> None:
+        candidates = checkpoint_candidates(parent)
+        try:
+            for round_index in range(rounds):
+                if not bot.registry.continuous_run_active(run_id):
+                    break
+                round_seed = seed + round_index
+                session_id = bot.registry.create_comparison(
+                    parent.style_id, parent.version, prompt, ITERATION_NEGATIVE, round_seed
+                )
+                await channel.send(
+                    f"🔄 `{run_id}` · 第 {round_index + 1}/{rounds} 輪 · "
+                    f"seed `{round_seed}` · strength `{strength}`"
+                )
+                for index, candidate in enumerate(candidates, start=1):
+                    if not bot.registry.continuous_run_active(run_id):
+                        break
+                    async with bot.generation_lock:
+                        result = await asyncio.to_thread(
+                            bot.inference.generate,
+                            [(candidate, strength)], prompt, ITERATION_NEGATIVE,
+                            round_seed, 768, 1024, "comparison",
+                        )
+                    generation_id = bot.registry.record_generation(
+                        candidate.model_id, prompt, ITERATION_NEGATIVE,
+                        result.seed, strength, result.image_path, "comparison",
+                    )
+                    bot.registry.add_comparison_candidate(
+                        session_id, generation_id, candidate.model_id, strength
+                    )
+                    message = await channel.send(
+                        content=(
+                            f"候選 {index}/{len(candidates)} · `{candidate.model_id}`\n"
+                            f"比較組 `{session_id}` · generation `{generation_id}`"
+                        ),
+                        file=discord.File(result.image_path),
+                        view=CandidateView(bot, session_id, generation_id),
+                    )
+                    bot.registry.attach_message(generation_id, str(message.id))
+                if bot.registry.continuous_run_active(run_id):
+                    bot.registry.complete_continuous_round(run_id)
+            status = "已完成" if bot.registry.continuous_run_active(run_id) is False else "已結束"
+            await channel.send(f"⏹️ 連續評測 `{run_id}` {status}。可使用 `/iteration_report` 查看統計。")
+        except Exception as exc:
+            LOGGER.exception("Continuous iteration failed")
+            bot.registry.stop_continuous_runs(parent.style_id)
+            await channel.send(f"連續評測 `{run_id}` 失敗：{str(exc)[-1200:]}")
 
     @bot.tree.command(name="upload_style", description="上傳一張圖片到指定風格資料集")
     @app_commands.describe(style="風格名稱", image="JPEG、PNG 或 WebP 圖片")
@@ -682,13 +767,15 @@ def register_commands(bot: StyleBot) -> None:
             return
         if style.trigger_token.lower() not in clean_prompt.lower():
             clean_prompt = f"{style.trigger_token}, {clean_prompt}"
-        candidates = [
-            item for item in bot.registry.list_models(parent.style_id)
-            if item.version == parent.version
-        ]
-        preferred = {"epoch-004": 0, "epoch-006": 1, "epoch-008": 2, "final": 3}
-        candidates.sort(key=lambda item: (preferred.get(item.checkpoint, 99), item.checkpoint))
-        candidates = [item for item in candidates if item.checkpoint in preferred][:4]
+        budget = estimated_clip_tokens(clean_prompt)
+        if budget > 70:
+            await interaction.response.send_message(
+                f"提示詞估算為 {budget} tokens，可能超過 SDXL 的 77-token 上限。"
+                "請縮短到 70 以下再生成。",
+                ephemeral=True,
+            )
+            return
+        candidates = checkpoint_candidates(parent)
         if len(candidates) < 2:
             await interaction.response.send_message("同版本至少需要兩個 checkpoint。", ephemeral=True)
             return
@@ -725,6 +812,84 @@ def register_commands(bot: StyleBot) -> None:
         except Exception as exc:
             LOGGER.exception("Iteration comparison failed")
             await interaction.followup.send(f"候選生成失敗：{str(exc)[-1500:]}", ephemeral=True)
+
+    @bot.tree.command(name="iterate_auto", description="連續生成多輪四圖比較，直到完成或手動停止")
+    @app_commands.describe(
+        model="作為基準的模型版本",
+        prompt="精簡英文提示詞；系統自動補觸發詞",
+        rounds="生成輪數；每輪四張，最多十輪",
+        strength="統一 LoRA 強度",
+        seed="第一輪 seed；後續每輪自動加一",
+    )
+    @app_commands.autocomplete(model=model_autocomplete)
+    async def iterate_auto(
+        interaction: discord.Interaction,
+        model: str,
+        prompt: str,
+        rounds: app_commands.Range[int, 1, 10] = 3,
+        strength: app_commands.Range[float, 0.1, 1.2] = 0.50,
+        seed: int = 42,
+    ) -> None:
+        if not bot.is_allowed(interaction.user.id):
+            await interaction.response.send_message("你沒有使用權限。", ephemeral=True)
+            return
+        parent = bot.registry.get_model(model)
+        if not parent:
+            await interaction.response.send_message("找不到模型。", ephemeral=True)
+            return
+        style = bot.settings.styles.get(parent.style_id)
+        if not style or interaction.channel_id != style.discord_channel_id:
+            await interaction.response.send_message("請在模型所屬子區執行。", ephemeral=True)
+            return
+        clean_prompt = prompt.strip()
+        if not clean_prompt:
+            await interaction.response.send_message("提示詞不能為空。", ephemeral=True)
+            return
+        if style.trigger_token.lower() not in clean_prompt.lower():
+            clean_prompt = f"{style.trigger_token}, {clean_prompt}"
+        budget = estimated_clip_tokens(clean_prompt)
+        if budget > 70:
+            await interaction.response.send_message(
+                f"提示詞估算為 {budget} tokens；請縮短到 70 以下，避免再次亂生成。",
+                ephemeral=True,
+            )
+            return
+        if len(checkpoint_candidates(parent)) < 2:
+            await interaction.response.send_message("同版本至少需要兩個 checkpoint。", ephemeral=True)
+            return
+        run_id = bot.registry.create_continuous_run(
+            parent.style_id, parent.version, clean_prompt, ITERATION_NEGATIVE,
+            strength, seed, rounds, str(interaction.channel_id),
+        )
+        await interaction.response.send_message(
+            f"✅ 已啟動 `{run_id}`：{rounds} 輪、每輪四個 checkpoint。"
+            "你可以邊生成邊選圖；使用 `/stop_iteration` 可安全停止。",
+            ephemeral=False,
+        )
+        task = asyncio.create_task(
+            run_continuous_generation(
+                run_id, interaction.channel, parent, clean_prompt, strength, seed, rounds
+            )
+        )
+        bot.background_tasks.add(task)
+        task.add_done_callback(bot.background_tasks.discard)
+
+    @bot.tree.command(name="stop_iteration", description="停止目前風格的連續評測")
+    @app_commands.describe(model="此風格的任一模型")
+    @app_commands.autocomplete(model=model_autocomplete)
+    async def stop_iteration(interaction: discord.Interaction, model: str) -> None:
+        if not bot.is_allowed(interaction.user.id):
+            await interaction.response.send_message("你沒有使用權限。", ephemeral=True)
+            return
+        record = bot.registry.get_model(model)
+        if not record:
+            await interaction.response.send_message("找不到模型。", ephemeral=True)
+            return
+        count = bot.registry.stop_continuous_runs(record.style_id)
+        await interaction.response.send_message(
+            f"⏹️ 已停止 {count} 個連續評測；目前正在完成的單張圖不會被強制中斷。",
+            ephemeral=True,
+        )
 
     @bot.tree.command(name="iteration_report", description="查看 checkpoint 勝率與缺陷統計")
     @app_commands.describe(model="此風格的任一模型")

@@ -103,6 +103,22 @@ class ModelRegistryTests(unittest.TestCase):
         self.assertEqual(report["candidates"][0]["wins"], 1)
         self.assertEqual(report["tags"][0]["tag"], "extra_limbs")
 
+    def test_continuous_run_can_complete_and_stop(self) -> None:
+        run_id = self.registry.create_continuous_run(
+            "outfit", "v001", "prompt", "negative", 0.5, 42, 2, "123"
+        )
+        self.assertTrue(self.registry.continuous_run_active(run_id))
+        self.registry.complete_continuous_round(run_id)
+        self.assertTrue(self.registry.continuous_run_active(run_id))
+        self.registry.complete_continuous_round(run_id)
+        self.assertFalse(self.registry.continuous_run_active(run_id))
+
+        second = self.registry.create_continuous_run(
+            "outfit", "v001", "prompt", "negative", 0.5, 50, 3, "123"
+        )
+        self.assertEqual(self.registry.stop_continuous_runs("outfit"), 1)
+        self.assertFalse(self.registry.continuous_run_active(second))
+
 
 if __name__ == "__main__":
     unittest.main()

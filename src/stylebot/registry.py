@@ -111,6 +111,20 @@ class ModelRegistry:
                     created_at TEXT NOT NULL,
                     UNIQUE (session_id, generation_id, user_id, tag)
                 );
+                CREATE TABLE IF NOT EXISTS continuous_runs (
+                    run_id TEXT PRIMARY KEY,
+                    style_id TEXT NOT NULL,
+                    version TEXT NOT NULL,
+                    prompt TEXT NOT NULL,
+                    negative_prompt TEXT NOT NULL,
+                    strength REAL NOT NULL,
+                    next_seed INTEGER NOT NULL,
+                    rounds_total INTEGER NOT NULL,
+                    rounds_completed INTEGER NOT NULL DEFAULT 0,
+                    status TEXT NOT NULL,
+                    channel_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
                 """
             )
 
@@ -318,6 +332,11 @@ class ModelRegistry:
         allowed = {
             "good_design", "good_color", "extra_limbs", "concept_bleeding",
             "mechanical_sleeves", "bad_pose", "copied_material", "bad_anatomy",
+            "good_anatomy", "good_silhouette", "good_clothing_structure",
+            "good_materials", "good_accessories", "good_pose", "good_style",
+            "good_prompt_match", "clothing_fusion", "bad_accessory_placement",
+            "bad_hands", "bad_face", "bad_composition", "cropped_body",
+            "wrong_style", "prompt_mismatch", "too_busy",
         }
         if tag not in allowed:
             raise ValueError("不支援的缺陷標記。")
@@ -359,3 +378,43 @@ class ModelRegistry:
             "candidates": [dict(row) for row in rows],
             "tags": [dict(row) for row in tags],
         }
+
+    def create_continuous_run(
+        self, style_id: str, version: str, prompt: str, negative_prompt: str,
+        strength: float, seed: int, rounds: int, channel_id: str,
+    ) -> str:
+        run_id = f"run-{uuid.uuid4().hex[:12]}"
+        with closing(self._connect()) as db, db:
+            db.execute(
+                "INSERT INTO continuous_runs VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 'running', ?, ?)",
+                (run_id, style_id, version, prompt, negative_prompt, strength,
+                 seed, rounds, channel_id, datetime.now(UTC).isoformat()),
+            )
+        return run_id
+
+    def continuous_run_active(self, run_id: str) -> bool:
+        with closing(self._connect()) as db:
+            row = db.execute(
+                "SELECT status, rounds_completed, rounds_total FROM continuous_runs WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()
+        return bool(row and row["status"] == "running" and row["rounds_completed"] < row["rounds_total"])
+
+    def complete_continuous_round(self, run_id: str) -> None:
+        with closing(self._connect()) as db, db:
+            db.execute(
+                "UPDATE continuous_runs SET rounds_completed = rounds_completed + 1, next_seed = next_seed + 1 WHERE run_id = ?",
+                (run_id,),
+            )
+            db.execute(
+                "UPDATE continuous_runs SET status = 'completed' WHERE run_id = ? AND rounds_completed >= rounds_total",
+                (run_id,),
+            )
+
+    def stop_continuous_runs(self, style_id: str) -> int:
+        with closing(self._connect()) as db, db:
+            cursor = db.execute(
+                "UPDATE continuous_runs SET status = 'stopped' WHERE style_id = ? AND status = 'running'",
+                (style_id,),
+            )
+        return cursor.rowcount
