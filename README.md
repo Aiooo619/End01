@@ -63,6 +63,19 @@ style's `datasets/<style>/captions/` directory and start with its trigger token.
 Use `scripts/start-caption-worker.ps1` to keep a worker running; it scans for
 newly approved images every 15 seconds and captions them automatically.
 
+## SDXL LoRA training
+
+The training worker uses the official `kohya-ss/sd-scripts` checkout under
+the ignored `work/` directory. `/train_style` creates a job only after the
+style reaches its minimum approved-image count. Run `scripts/run-trainer-dry.ps1`
+to validate a queued job without downloading SDXL or using the GPU, then run
+`scripts/run-trainer.ps1` to start training. Outputs are versioned under
+`models/<style>/v001/`, `v002/`, and so on.
+
+The default 16GB profile trains SDXL UNet-only LoRA with rank 32, BF16,
+gradient checkpointing, latent/text-encoder disk caches, SDPA, and an 8-bit
+optimizer. Raw images, caches, base models, logs, and model weights stay local.
+
 Direct uploads support multiple attachments when the Discord channel ID is
 mapped to a style. Accepted formats are JPEG, PNG, and WebP; the shortest side
 must be at least 512 pixels.

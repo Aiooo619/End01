@@ -200,6 +200,14 @@ class DatasetStore:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def approved_items(self, style_id: str) -> list[dict[str, str | int]]:
+        with closing(self._connect()) as db, db:
+            rows = db.execute(
+                "SELECT sha256, filename, local_path, width, height FROM images WHERE style_id = ? AND status = 'approved' ORDER BY created_at",
+                (style_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def _queue_caption(self, row: sqlite3.Row, destination: Path) -> None:
         caption_root = self.queue_root / "captions"
         caption_root.mkdir(parents=True, exist_ok=True)

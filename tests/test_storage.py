@@ -9,6 +9,7 @@ from PIL import Image
 
 from stylebot.config import Settings, StyleConfig
 from stylebot.storage import DatasetStore, IngestError
+from stylebot.trainer import TrainingWorker
 
 
 class DatasetStoreTests(unittest.TestCase):
@@ -50,7 +51,18 @@ class DatasetStoreTests(unittest.TestCase):
         self.assertEqual(self.store.status("film")["approved"], 1)
         self.assertEqual(len(list((self.root / "queues" / "captions").glob("*.json"))), 1)
         self.assertEqual(self.store.queue_missing_captions(), 0)
-        self.assertTrue(self.store.queue_training(self.style).exists())
+        caption_path = self.root / "datasets" / "film" / "captions" / f"{Path(first.filename).stem}.txt"
+        caption_path.write_text("film_style, solo, full body\n", encoding="utf-8")
+        job = self.store.queue_training(self.style)
+        self.assertTrue(job.exists())
+        scripts_root = self.root / "work" / "sd-scripts"
+        (scripts_root / "venv" / "Scripts").mkdir(parents=True)
+        (scripts_root / "venv" / "Scripts" / "python.exe").touch()
+        (scripts_root / "sdxl_train_network.py").touch()
+        prepared = TrainingWorker(self.store.settings).prepare(job)
+        self.assertEqual(prepared.image_count, 1)
+        self.assertTrue(prepared.dataset_config.exists())
+        self.assertIn("--network_train_unet_only", prepared.command)
 
     def test_pending_and_reject_by_message(self) -> None:
         self.store.ingest(
