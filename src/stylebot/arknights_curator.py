@@ -182,7 +182,7 @@ def accept_record(root: Path, rank: int, answers: dict[str, str], training_filen
     record = next(item for item in records if item["rank"] == rank)
     source = root / "datasets" / "arknights_top50" / "curation" / record["filename"]
     approved = root / "datasets" / "arknights_portrait" / "approved" / (training_filename or record["filename"])
-    caption = root / "datasets" / "arknights_portrait" / "captions" / f"{source.stem}.txt"
+    caption = root / "datasets" / "arknights_portrait" / "captions" / f"{approved.stem}.txt"
     approved.parent.mkdir(parents=True, exist_ok=True)
     caption.parent.mkdir(parents=True, exist_ok=True)
     if not approved.exists():

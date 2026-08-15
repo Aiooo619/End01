@@ -1,4 +1,4 @@
-base_model: "stabilityai/stable-diffusion-xl-base-1.0"
+base_model: "models/comfyui/checkpoints/Illustrious-XL-v2.0.safetensors"
 resolution: 1024
 mixed_precision: "bf16"
 gradient_checkpointing: true

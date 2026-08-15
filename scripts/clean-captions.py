@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 from collections import Counter
 from datetime import datetime, timezone
@@ -24,6 +25,15 @@ REQUIRED = ("arknights_portrait_style", "character costume design")
 BLOCK_TAGS = {"ears through headwear", "adjusting eyewear"}
 
 
+def estimated_tokens(tags: list[str]) -> int:
+    text = ", ".join(tags)
+    return (
+        len(re.findall(r"[\u3400-\u9fff]", text)) * 2
+        + len(re.findall(r"[A-Za-z0-9_'-]+", text))
+        + len(re.findall(r"[,.;:，。；：]", text))
+    )
+
+
 def clean_caption(text: str) -> tuple[str, list[str]]:
     tags = [tag.strip().lower() for tag in text.replace("\n", " ").split(",") if tag.strip()]
     kept: list[str] = list(REQUIRED)
@@ -37,6 +47,12 @@ def clean_caption(text: str) -> tuple[str, list[str]]:
         kept.append("solo")
     if "full body" not in kept:
         kept.append("full body")
+    protected = {*REQUIRED, "solo", "full body"}
+    while estimated_tokens(kept) > 70:
+        removable = next((index for index in range(len(kept) - 1, -1, -1) if kept[index] not in protected), None)
+        if removable is None:
+            break
+        kept.pop(removable)
     removed = [tag for tag in tags if tag not in kept and tag not in REQUIRED]
     return ", ".join(kept), removed
 
@@ -44,9 +60,14 @@ def clean_caption(text: str) -> tuple[str, list[str]]:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Clean costume-design training captions")
     parser.add_argument("--root", type=Path, default=Path("datasets/arknights_portrait/captions"))
+    parser.add_argument("--approved-root", type=Path, default=Path("datasets/arknights_portrait/approved"))
     parser.add_argument("--apply", action="store_true")
     args = parser.parse_args()
-    files = sorted(args.root.resolve().glob("*.txt"))
+    approved_stems = {
+        path.stem for path in args.approved_root.resolve().iterdir()
+        if path.is_file() and path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}
+    }
+    files = sorted(path for path in args.root.resolve().glob("*.txt") if path.stem in approved_stems)
     if not files:
         raise SystemExit("No caption files found")
 
@@ -65,6 +86,7 @@ def main() -> int:
 
     report = {
         "files": len(files),
+        "approved_images": len(approved_stems),
         "changed": sum(item["before"] != item["after"] for item in changes),
         "removed_tags": sum(removed_counts.values()),
         "top_removed": removed_counts.most_common(30),

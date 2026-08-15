@@ -127,12 +127,16 @@ class TrainingWorker:
 
         output_dir = self.settings.data_root / "models" / style.style_id / version_name
         output_name = f"{style.style_id}_{version_name}"
+        base_model = str(self.config["base_model"])
+        local_base_model = self.settings.project_root / base_model
+        if not Path(base_model).is_absolute() and local_base_model.exists():
+            base_model = str(local_base_model.resolve())
         command = [
             str(self.python), "-m", "accelerate.commands.launch",
             "--num_cpu_threads_per_process=1",
             f"--mixed_precision={self.config['mixed_precision']}",
             str(self.script),
-            f"--pretrained_model_name_or_path={self.config['base_model']}",
+            f"--pretrained_model_name_or_path={base_model}",
             f"--dataset_config={dataset_config}",
             f"--output_dir={output_dir}",
             f"--output_name={output_name}",
