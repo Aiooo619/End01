@@ -44,9 +44,14 @@ powershell -ExecutionPolicy Bypass -File scripts/start-comfyui.ps1
 ComfyUI reads checkpoints from `models/comfyui/checkpoints`, LoRAs recursively
 from `models/`, and writes images to `outputs/comfyui`.
 
-`comfyui/workflows/CharacterDesignGenerator.json` is an API workflow skeleton.
-It intentionally contains a placeholder checkpoint until the Illustrious model
-choice and license are confirmed.
+`Illustrious-XL-v2.0.safetensors` is installed locally under the ignored model
+directory and has been verified both with safetensors and ComfyUI. The baseline
+workflow generated a 768x1024 image in 9.48 seconds on this machine.
+
+`comfyui/workflows/IllustriousBaseline.json` is the pure-base validation
+workflow. `CharacterDesignGenerator.json` is the future v003 workflow and keeps
+an explicit Illustrious LoRA placeholder so v001/v002 cannot be attached by
+accident.
 
 ## Base-model migration rule
 

@@ -33,6 +33,7 @@ models/**
 !models/.gitkeep
 outputs/generated/**
 outputs/previews/**
+outputs/comfyui/**
 !outputs/.gitkeep
 !outputs/**/.gitkeep
 *.safetensors

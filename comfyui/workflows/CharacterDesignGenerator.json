@@ -16,7 +16,7 @@
   },
   "4": {
     "class_type": "CheckpointLoaderSimple",
-    "inputs": {"ckpt_name": "PUT_ILLUSTRIOUS_XL_MODEL_HERE.safetensors"}
+    "inputs": {"ckpt_name": "Illustrious-XL-v2.0.safetensors"}
   },
   "5": {
     "class_type": "EmptyLatentImage",
@@ -43,7 +43,7 @@
     "inputs": {
       "model": ["4", 0],
       "clip": ["4", 1],
-      "lora_name": "arknights_portrait/v002/arknights_portrait_v002.safetensors",
+      "lora_name": "PUT_ILLUSTRIOUS_COSTUME_LORA_HERE.safetensors",
       "strength_model": 0.5,
       "strength_clip": 0.0
     }

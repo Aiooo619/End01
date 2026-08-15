@@ -30,6 +30,20 @@ class V1ConfigTests(unittest.TestCase):
         latent = next(node for node in workflow.values() if node["class_type"] == "EmptyLatentImage")
         self.assertEqual(latent["inputs"]["batch_size"], 4)
 
+    def test_illustrious_workflows_do_not_attach_legacy_lora(self) -> None:
+        workflows = self.root / "comfyui" / "workflows"
+        generator_text = (workflows / "CharacterDesignGenerator.json").read_text(encoding="utf-8")
+        baseline = json.loads((workflows / "IllustriousBaseline.json").read_text(encoding="utf-8"))
+
+        self.assertNotIn("arknights_portrait_v001", generator_text)
+        self.assertNotIn("arknights_portrait_v002", generator_text)
+        checkpoint = next(
+            node for node in baseline.values() if node["class_type"] == "CheckpointLoaderSimple"
+        )
+        self.assertEqual(
+            checkpoint["inputs"]["ckpt_name"], "Illustrious-XL-v2.0.safetensors"
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
