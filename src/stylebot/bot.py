@@ -1,0 +1,183 @@
+from __future__ import annotations
+
+import logging
+
+import discord
+from discord import app_commands
+from discord.ext import commands
+
+from .config import Settings, StyleConfig
+from .storage import DatasetStore, IngestError
+
+
+LOGGER = logging.getLogger(__name__)
+
+
+class StyleBot(commands.Bot):
+    def __init__(self, settings: Settings, store: DatasetStore):
+        intents = discord.Intents.default()
+        intents.message_content = True
+        super().__init__(command_prefix="!stylebot ", intents=intents)
+        self.settings = settings
+        self.store = store
+        self._synced = False
+
+    async def setup_hook(self) -> None:
+        if self.settings.guild_id:
+            guild = discord.Object(id=self.settings.guild_id)
+            self.tree.copy_global_to(guild=guild)
+            await self.tree.sync(guild=guild)
+            LOGGER.info("Slash commands synced to guild %s", self.settings.guild_id)
+        else:
+            await self.tree.sync()
+            LOGGER.info("Slash commands synced globally")
+
+    async def on_ready(self) -> None:
+        LOGGER.info("Logged in as %s (%s)", self.user, getattr(self.user, "id", "?"))
+
+    def is_allowed(self, user_id: int) -> bool:
+        return not self.settings.allowed_user_ids or user_id in self.settings.allowed_user_ids
+
+    def style_for_channel(self, channel_id: int) -> StyleConfig | None:
+        return next(
+            (style for style in self.settings.styles.values() if style.discord_channel_id == channel_id),
+            None,
+        )
+
+    def style_by_name(self, value: str) -> StyleConfig | None:
+        normalized = value.strip().casefold()
+        return next(
+            (
+                style
+                for style in self.settings.styles.values()
+                if normalized in {style.style_id.casefold(), style.display_name.casefold()}
+            ),
+            None,
+        )
+
+    async def ingest_attachment(
+        self,
+        style: StyleConfig,
+        attachment: discord.Attachment,
+        message_id: str,
+        user_id: str,
+    ) -> str:
+        if attachment.size > self.settings.max_attachment_mb * 1024 * 1024:
+            return f"❌ `{attachment.filename}` 超過大小限制"
+        try:
+            payload = await attachment.read(use_cached=True)
+            result = self.store.ingest(style, payload, attachment.filename, message_id, user_id)
+        except IngestError as exc:
+            return f"❌ `{attachment.filename}`：{exc}"
+        except discord.HTTPException:
+            LOGGER.exception("Failed to download attachment %s", attachment.id)
+            return f"❌ `{attachment.filename}`：下載失敗"
+        if result.status == "duplicate":
+            return f"♻️ `{attachment.filename}` 已存在於 `{result.style_id}`"
+        return f"✅ `{attachment.filename}` → **{style.display_name}**（{result.width}×{result.height}）"
+
+    async def on_message(self, message: discord.Message) -> None:
+        if message.author.bot or not message.attachments:
+            return
+        if not self.is_allowed(message.author.id):
+            return
+        style = self.style_for_channel(message.channel.id)
+        if not style:
+            return
+        responses = [
+            await self.ingest_attachment(style, item, str(message.id), str(message.author.id))
+            for item in message.attachments
+        ]
+        await message.reply("\n".join(responses), mention_author=False)
+
+
+def register_commands(bot: StyleBot) -> None:
+    async def style_autocomplete(
+        interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        del interaction
+        current = current.casefold()
+        return [
+            app_commands.Choice(name=style.display_name, value=style.style_id)
+            for style in bot.settings.styles.values()
+            if current in style.style_id.casefold() or current in style.display_name.casefold()
+        ][:25]
+
+    @bot.tree.command(name="upload_style", description="上傳一張圖片到指定風格資料集")
+    @app_commands.describe(style="風格名稱", image="JPEG、PNG 或 WebP 圖片")
+    @app_commands.autocomplete(style=style_autocomplete)
+    async def upload_style(
+        interaction: discord.Interaction, style: str, image: discord.Attachment
+    ) -> None:
+        if not bot.is_allowed(interaction.user.id):
+            await interaction.response.send_message("你沒有使用權限。", ephemeral=True)
+            return
+        selected = bot.style_by_name(style)
+        if not selected:
+            await interaction.response.send_message("找不到這個風格。", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        result = await bot.ingest_attachment(
+            selected, image, str(interaction.id), str(interaction.user.id)
+        )
+        await interaction.followup.send(result, ephemeral=True)
+
+    @bot.tree.command(name="material_status", description="查看風格素材數量")
+    @app_commands.describe(style="風格名稱")
+    @app_commands.autocomplete(style=style_autocomplete)
+    async def material_status(interaction: discord.Interaction, style: str) -> None:
+        selected = bot.style_by_name(style)
+        if not selected:
+            await interaction.response.send_message("找不到這個風格。", ephemeral=True)
+            return
+        counts = bot.store.status(selected.style_id)
+        await interaction.response.send_message(
+            f"**{selected.display_name}**\n待審核：{counts['incoming']}\n已批准：{counts['approved']}\n已拒絕：{counts['rejected']}",
+            ephemeral=True,
+        )
+
+    @bot.tree.command(name="approve_style", description="批准風格的待審核素材")
+    @app_commands.describe(style="風格名稱", limit="本次最多批准數量")
+    @app_commands.autocomplete(style=style_autocomplete)
+    async def approve_style(
+        interaction: discord.Interaction, style: str, limit: app_commands.Range[int, 1, 500] = 100
+    ) -> None:
+        if not bot.is_allowed(interaction.user.id):
+            await interaction.response.send_message("你沒有使用權限。", ephemeral=True)
+            return
+        selected = bot.style_by_name(style)
+        if not selected:
+            await interaction.response.send_message("找不到這個風格。", ephemeral=True)
+            return
+        count = bot.store.approve(selected.style_id, limit)
+        await interaction.response.send_message(
+            f"已批准 **{selected.display_name}** 的 {count} 張素材。", ephemeral=True
+        )
+
+    @bot.tree.command(name="train_style", description="建立指定風格的訓練工作")
+    @app_commands.describe(style="風格名稱")
+    @app_commands.autocomplete(style=style_autocomplete)
+    async def train_style(interaction: discord.Interaction, style: str) -> None:
+        if not bot.is_allowed(interaction.user.id):
+            await interaction.response.send_message("你沒有使用權限。", ephemeral=True)
+            return
+        selected = bot.style_by_name(style)
+        if not selected:
+            await interaction.response.send_message("找不到這個風格。", ephemeral=True)
+            return
+        try:
+            job = bot.store.queue_training(selected)
+        except IngestError as exc:
+            await interaction.response.send_message(f"尚未建立訓練：{exc}", ephemeral=True)
+            return
+        await interaction.response.send_message(
+            f"✅ 已建立訓練工作 `{job.stem}`。", ephemeral=True
+        )
+
+
+def create_bot(settings: Settings) -> StyleBot:
+    store = DatasetStore(settings)
+    bot = StyleBot(settings, store)
+    register_commands(bot)
+    return bot
+

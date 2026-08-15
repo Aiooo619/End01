@@ -2,6 +2,8 @@
 .env
 *.token
 *.key
+config/styles.yaml
+config/training.yaml
 
 # Python / local environments
 .venv/
