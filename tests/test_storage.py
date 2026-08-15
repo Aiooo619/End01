@@ -16,7 +16,7 @@ class DatasetStoreTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
-        self.style = StyleConfig("film", "底片", None, "film_style", 1)
+        self.style = StyleConfig("film", "底片", None, "film_style", 1, "design")
         settings = Settings(
             project_root=self.root,
             data_root=self.root,

@@ -11,6 +11,7 @@ from pathlib import Path
 import yaml
 
 from .config import Settings
+from .registry import ModelRegistry
 from .storage import DatasetStore, IngestError
 
 
@@ -31,6 +32,7 @@ DEFAULTS = {
 @dataclass(frozen=True)
 class PreparedRun:
     job_path: Path
+    style_id: str
     run_root: Path
     dataset_config: Path
     output_dir: Path
@@ -43,6 +45,7 @@ class TrainingWorker:
     def __init__(self, settings: Settings):
         self.settings = settings
         self.store = DatasetStore(settings)
+        self.registry = ModelRegistry(settings)
         self.sd_scripts = settings.project_root / "work" / "sd-scripts"
         self.python = self.sd_scripts / "venv" / "Scripts" / "python.exe"
         self.script = self.sd_scripts / "sdxl_train_network.py"
@@ -58,7 +61,7 @@ class TrainingWorker:
         root = self.settings.data_root / "models" / style_id
         versions = [
             int(path.name[1:]) for path in root.glob("v[0-9][0-9][0-9]")
-            if path.name[1:].isdigit()
+            if path.name[1:].isdigit() and any(path.glob("*.safetensors"))
         ] if root.exists() else []
         return max(versions, default=0) + 1
 
@@ -121,7 +124,6 @@ class TrainingWorker:
         )
 
         output_dir = self.settings.data_root / "models" / style.style_id / version_name
-        output_dir.mkdir(parents=True, exist_ok=True)
         output_name = f"{style.style_id}_{version_name}"
         command = [
             str(self.python), "-m", "accelerate.commands.launch",
@@ -156,17 +158,35 @@ class TrainingWorker:
             "--persistent_data_loader_workers",
         ]
         return PreparedRun(
-            job_path, run_root, dataset_config, output_dir, output_name, command, len(items)
+            job_path, style.style_id, run_root, dataset_config, output_dir, output_name, command, len(items)
         )
 
     @staticmethod
     def _write_job(path: Path, job: dict) -> None:
         path.write_text(json.dumps(job, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    def register_outputs(self, prepared: PreparedRun, source_job_id: str) -> int:
+        count = 0
+        version = prepared.output_dir.name
+        for path in sorted(prepared.output_dir.glob("*.safetensors")):
+            suffix = path.stem.rsplit("-", 1)[-1]
+            checkpoint = f"epoch-{int(suffix):03d}" if suffix.isdigit() else "final"
+            self.registry.register_model(
+                style_id=prepared.style_id,
+                version=version,
+                checkpoint=checkpoint,
+                path=path,
+                source_job_id=source_job_id,
+                metadata={"output_name": prepared.output_name},
+            )
+            count += 1
+        return count
+
     def run(self, job_path: Path, dry_run: bool = False) -> PreparedRun:
         prepared = self.prepare(job_path)
         if dry_run:
             return prepared
+        prepared.output_dir.mkdir(parents=True, exist_ok=True)
         job = json.loads(job_path.read_text(encoding="utf-8"))
         job.update(
             version=prepared.output_name,
@@ -193,6 +213,7 @@ class TrainingWorker:
                     check=True,
                 )
             job.update(status="completed", finished_at=datetime.now(UTC).isoformat())
+            job["registered_models"] = self.register_outputs(prepared, job["job_id"])
         except Exception as exc:
             job.update(status="failed", error=str(exc), finished_at=datetime.now(UTC).isoformat())
             raise

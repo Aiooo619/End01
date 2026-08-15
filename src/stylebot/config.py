@@ -16,6 +16,7 @@ class StyleConfig:
     discord_channel_id: int | None
     trigger_token: str
     minimum_approved_images: int
+    model_type: str = "design"
     enabled: bool = True
 
 
@@ -64,6 +65,7 @@ def load_settings(project_root: Path | None = None) -> Settings:
             discord_channel_id=_optional_int(raw.get("discord_channel_id")),
             trigger_token=str(raw.get("trigger_token", f"{style_id}_style")),
             minimum_approved_images=int(raw.get("minimum_approved_images", 50)),
+            model_type=str(raw.get("model_type", "design")),
             enabled=bool(raw.get("enabled", True)),
         )
         if style.enabled:

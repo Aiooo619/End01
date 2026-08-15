@@ -51,6 +51,13 @@ Available slash commands:
 - `/approve_style` — approve incoming images
 - `/reject_style` — reject incoming images in a batch
 - `/train_style` — create a versioned training queue job
+- `/models` — list draft, production, and archived model checkpoints
+- `/review_model` — generate one reproducible review image in a model thread
+- `/review_suite` — run four fixed costume-design review prompts
+- `/feedback` — attach categorized feedback to a model or generation
+- `/start_iteration` — record the change plan for the next model version
+- `/promote_model` — publish the selected checkpoint as production
+- `/generate` — generate with a production model, optional second LoRA and pose image
 
 To reject only the images attached to one Discord message, open the message
 context menu and choose **Apps → Reject training images**. Approving an image
@@ -80,6 +87,12 @@ Captions are intentionally ordered for costume-design learning: trigger token,
 `character costume design`, clothing/accessories, character traits, composition,
 then rendering or art-method tags. Character-name predictions are excluded and
 caption shuffling is disabled so this structure remains stable during training.
+
+Model types are kept modular: `design`, `art`, `character`, and `control`.
+Only production checkpoints appear in `/generate`; review images, seeds, LoRA
+strengths, selections, feedback, and iteration plans are stored in the local
+registry for reproducibility. A pose attachment activates the optional SDXL
+OpenPose ControlNet path instead of training exact poses into a style LoRA.
 
 Direct uploads support multiple attachments when the Discord channel ID is
 mapped to a style. Accepted formats are JPEG, PNG, and WebP; the shortest side
