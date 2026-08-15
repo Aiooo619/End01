@@ -17,7 +17,18 @@ from .config import Settings
 LOGGER = logging.getLogger(__name__)
 MODEL_REPO = "SmilingWolf/wd-vit-tagger-v3"
 GENERAL_THRESHOLD = 0.35
-CHARACTER_THRESHOLD = 0.85
+DESIGN_ANCHOR = "character costume design"
+DESIGN_WORDS = {
+    "armor", "belt", "blazer", "boots", "bow", "bracelet", "cape", "cloak",
+    "coat", "collar", "dress", "earrings", "eyewear", "fedora", "footwear",
+    "gloves", "goggles", "hat", "headwear", "hood", "jacket", "jewelry",
+    "pants", "ribbon", "scarf", "shirt", "shoes", "shorts", "skirt", "sleeves",
+    "socks", "stockings", "suit", "sweater", "tie", "uniform", "vest",
+}
+ART_WORDS = {
+    "3d", "cel shading", "chibi", "comic", "gradient", "lineart", "monochrome",
+    "painting", "pixel art", "realistic", "render", "sketch", "watercolor",
+}
 KAOMOJI = {
     "0_0", "(o)_(o)", "+_+", "+_-", "._.", "<o>_<o>", "<|>_<|>",
     "=_=", ">_<", "3_3", "6_9", ">_o", "@_@", "^_^", "o_o", "u_u",
@@ -79,10 +90,24 @@ class WDTagger:
             score = float(score)
             if tag.category == 0 and score >= GENERAL_THRESHOLD:
                 selected.append((self._display_name(tag.name), score))
-            elif tag.category == 4 and score >= CHARACTER_THRESHOLD:
-                selected.append((self._display_name(tag.name), score))
-        selected.sort(key=lambda item: item[1], reverse=True)
-        return ", ".join([trigger_token, *(name for name, _ in selected)])
+
+        def priority(item: tuple[str, float]) -> tuple[int, float]:
+            name, score = item
+            words = set(name.split())
+            if words & DESIGN_WORDS or name in DESIGN_WORDS:
+                group = 0
+            elif words & ART_WORDS or name in ART_WORDS:
+                group = 3
+            elif any(term in name for term in ("background", "looking", "standing", "sitting", "view")):
+                group = 2
+            else:
+                group = 1
+            return group, -score
+
+        selected.sort(key=priority)
+        return ", ".join(
+            [trigger_token, DESIGN_ANCHOR, *(name for name, _ in selected[:60])]
+        )
 
 
 def process_caption_jobs(settings: Settings, limit: int = 100) -> tuple[int, int]:
@@ -118,4 +143,3 @@ def process_caption_jobs(settings: Settings, limit: int = 100) -> tuple[int, int
             failed += 1
         path.write_text(json.dumps(job, ensure_ascii=False, indent=2), encoding="utf-8")
     return completed, failed
-

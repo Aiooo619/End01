@@ -76,6 +76,11 @@ The default 16GB profile trains SDXL UNet-only LoRA with rank 32, BF16,
 gradient checkpointing, latent/text-encoder disk caches, SDPA, and an 8-bit
 optimizer. Raw images, caches, base models, logs, and model weights stay local.
 
+Captions are intentionally ordered for costume-design learning: trigger token,
+`character costume design`, clothing/accessories, character traits, composition,
+then rendering or art-method tags. Character-name predictions are excluded and
+caption shuffling is disabled so this structure remains stable during training.
+
 Direct uploads support multiple attachments when the Discord channel ID is
 mapped to a style. Accepted formats are JPEG, PNG, and WebP; the shortest side
 must be at least 512 pixels.

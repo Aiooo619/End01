@@ -100,8 +100,8 @@ class TrainingWorker:
                 [
                     "[general]",
                     'caption_extension = ".txt"',
-                    "shuffle_caption = true",
-                    "keep_tokens = 1",
+                    "shuffle_caption = false",
+                    "keep_tokens = 2",
                     "",
                     "[[datasets]]",
                     f"resolution = {int(self.config['resolution'])}",
