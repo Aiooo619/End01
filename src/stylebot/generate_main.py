@@ -48,9 +48,14 @@ def main() -> int:
             base_model, controlnet=controlnet, torch_dtype=dtype, use_safetensors=True
         )
     else:
-        pipe = StableDiffusionXLPipeline.from_pretrained(
-            base_model, torch_dtype=dtype, use_safetensors=True
-        )
+        if Path(base_model).is_file():
+            pipe = StableDiffusionXLPipeline.from_single_file(
+                base_model, torch_dtype=dtype, use_safetensors=True
+            )
+        else:
+            pipe = StableDiffusionXLPipeline.from_pretrained(
+                base_model, torch_dtype=dtype, use_safetensors=True
+            )
 
     adapter_names: list[str] = []
     adapter_weights: list[float] = []

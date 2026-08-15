@@ -64,12 +64,16 @@ class InferenceRunner:
         request_root = self.settings.data_root / "queues" / "generation_requests"
         request_root.mkdir(parents=True, exist_ok=True)
         request_path = request_root / f"{request_id}.json"
-        local_base = self.settings.data_root / "models" / "base" / "sdxl-base-1.0"
-        base_model = (
-            local_base.as_posix()
-            if (local_base / "model_index.json").exists()
-            else "stabilityai/stable-diffusion-xl-base-1.0"
-        )
+        illustrious = self.settings.data_root / "models" / "comfyui" / "checkpoints" / "Illustrious-XL-v2.0.safetensors"
+        if illustrious.exists():
+            base_model = illustrious.as_posix()
+        else:
+            local_base = self.settings.data_root / "models" / "base" / "sdxl-base-1.0"
+            base_model = (
+                local_base.as_posix()
+                if (local_base / "model_index.json").exists()
+                else "stabilityai/stable-diffusion-xl-base-1.0"
+            )
         request = {
             "request_id": request_id,
             "base_model": base_model,
@@ -105,6 +109,8 @@ class InferenceRunner:
             env=environment,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             check=False,
         )
         if process.returncode != 0:
