@@ -9,7 +9,7 @@ network_alpha: 16
 batch_size: 1
 save_every_n_epochs: 1
 max_versions_per_style: 10
-learning_rate: 0.0001
-epochs: 10
-repeats: 5
+learning_rate: 0.00005
+epochs: 8
+repeats: 3
 seed: 42

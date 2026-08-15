@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import os
 import re
 import uuid
 from pathlib import Path
@@ -142,6 +144,8 @@ class StyleBot(commands.Bot):
         self.inference = InferenceRunner(settings)
         self.generation_lock = asyncio.Lock()
         self.background_tasks: set[asyncio.Task] = set()
+        self.training_jobs: set[str] = set()
+        self._training_scan_started = False
         self._synced = False
 
     async def setup_hook(self) -> None:
@@ -156,6 +160,101 @@ class StyleBot(commands.Bot):
 
     async def on_ready(self) -> None:
         LOGGER.info("Logged in as %s (%s)", self.user, getattr(self.user, "id", "?"))
+        if not self._training_scan_started:
+            self._training_scan_started = True
+            await self.start_pending_training_monitors()
+
+    @staticmethod
+    def training_progress(log_path: Path) -> tuple[int, int, float, str, str] | None:
+        if not log_path.exists():
+            return None
+        with log_path.open("rb") as handle:
+            handle.seek(max(0, log_path.stat().st_size - 200_000))
+            text = handle.read().decode("utf-8", errors="replace")
+        matches = list(re.finditer(r"(\d+)/(\d+)\s+\[[^\]<]*<([^,\]]+)", text))
+        if not matches:
+            return None
+        match = matches[-1]
+        step, total = int(match.group(1)), int(match.group(2))
+        losses = re.findall(r"avr_loss=([0-9.]+)", text[match.start():])
+        return step, total, step / total * 100, match.group(3).strip(), losses[-1] if losses else "—"
+
+    @staticmethod
+    def progress_bar(percent: float, width: int = 20) -> str:
+        filled = min(width, max(0, round(percent / 100 * width)))
+        return "█" * filled + "░" * (width - filled)
+
+    async def start_pending_training_monitors(self) -> None:
+        for job_path in sorted((self.settings.data_root / "queues").glob("*.json")):
+            job = json.loads(job_path.read_text(encoding="utf-8"))
+            if job.get("status") not in {"queued", "running"}:
+                continue
+            style = self.settings.styles.get(job.get("style_id", ""))
+            if not style or not style.discord_channel_id:
+                continue
+            channel = self.get_channel(style.discord_channel_id)
+            if channel is None:
+                channel = await self.fetch_channel(style.discord_channel_id)
+            task = asyncio.create_task(self.monitor_training_job(job_path, channel))
+            self.background_tasks.add(task)
+            task.add_done_callback(self.background_tasks.discard)
+
+    async def monitor_training_job(self, job_path: Path, channel) -> None:
+        job_id = job_path.stem
+        if job_id in self.training_jobs:
+            return
+        self.training_jobs.add(job_id)
+        job = json.loads(job_path.read_text(encoding="utf-8"))
+        mention = " ".join(f"<@{user_id}>" for user_id in self.settings.allowed_user_ids)
+        message = await channel.send(
+            f"{mention}\n🚀 訓練 `{job_id}` 準備中…\n`░░░░░░░░░░░░░░░░░░░░` 0%"
+        )
+        process = None
+        try:
+            if job.get("status") == "queued":
+                python = self.settings.project_root / "work" / "sd-scripts" / "venv" / "Scripts" / "python.exe"
+                environment = os.environ.copy()
+                environment["PYTHONPATH"] = str(self.settings.project_root / "src")
+                process = await asyncio.create_subprocess_exec(
+                    str(python), "-m", "stylebot.trainer_main", "--job", job_path.name,
+                    cwd=self.settings.project_root, env=environment,
+                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+                )
+            log_path = self.settings.project_root / "work" / "training_runs" / job_id / "training.log"
+            last_content = ""
+            while True:
+                await asyncio.sleep(15)
+                job = json.loads(job_path.read_text(encoding="utf-8"))
+                progress = self.training_progress(log_path)
+                if progress:
+                    step, total, percent, eta, loss = progress
+                    content = (
+                        f"{mention}\n🏋️ 訓練 `{job_id}` · `{job.get('version', '準備中')}`\n"
+                        f"`{self.progress_bar(percent)}` **{percent:.1f}%**\n"
+                        f"step `{step}/{total}` · loss `{loss}` · ETA `{eta}`"
+                    )
+                    if content != last_content:
+                        await message.edit(content=content)
+                        last_content = content
+                if job.get("status") in {"completed", "failed"}:
+                    break
+                if process and process.returncode is not None:
+                    break
+            if process:
+                await process.communicate()
+            job = json.loads(job_path.read_text(encoding="utf-8"))
+            if job.get("status") == "completed":
+                await message.edit(content=(
+                    f"{mention}\n✅ 訓練 `{job_id}` 已完成 · `{job.get('version', '')}`\n"
+                    f"`{self.progress_bar(100)}` **100%** · 已登錄 {job.get('registered_models', 0)} 個 checkpoint"
+                ))
+            else:
+                await message.edit(content=f"{mention}\n❌ 訓練 `{job_id}` 失敗：{job.get('error', '請查看日誌')}")
+        except Exception as exc:
+            LOGGER.exception("Training monitor failed")
+            await message.edit(content=f"{mention}\n❌ 訓練監控失敗：{str(exc)[-1000:]}")
+        finally:
+            self.training_jobs.discard(job_id)
 
     def is_allowed(self, user_id: int) -> bool:
         return not self.settings.allowed_user_ids or user_id in self.settings.allowed_user_ids
@@ -539,8 +638,11 @@ def register_commands(bot: StyleBot) -> None:
             await interaction.response.send_message(f"尚未建立訓練：{exc}", ephemeral=True)
             return
         await interaction.response.send_message(
-            f"✅ 已建立訓練工作 `{job.stem}`。", ephemeral=True
+            f"✅ 已建立訓練工作 `{job.stem}`，正在啟動；進度會顯示在此子區。", ephemeral=True
         )
+        task = asyncio.create_task(bot.monitor_training_job(job, interaction.channel))
+        bot.background_tasks.add(task)
+        task.add_done_callback(bot.background_tasks.discard)
 
     @bot.tree.command(name="models", description="查看已註冊的模型版本")
     async def models(interaction: discord.Interaction) -> None:
