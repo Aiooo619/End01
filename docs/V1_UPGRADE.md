@@ -64,7 +64,13 @@ the V1 quality and size target.
 
 `config/arknights_popularity_top50.json` records the ranking and asset
 provenance. The collector resolves names against both EN and CN game data,
-prefers clean E2 art, verifies each PNG, and stores local copies outside Git.
+prefers clean base/E1 art over dynamic E2 art, verifies each PNG, and stores
+local copies outside Git.
+
+Before Discord review, the local WD tagger drafts clothing layers, design
+features, and accessories. These are suggestions rather than ground truth:
+uncertain fields are explicitly marked for correction, and the reviewer only
+needs to correct the draft and choose the strongest learning focus.
 
 On bot startup, newly downloaded records are posted to the existing
 `方舟立繪` Discord thread. For each image:

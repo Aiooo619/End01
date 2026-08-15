@@ -54,10 +54,10 @@ def choose_art(character_id: str, tree_path: Path) -> str | None:
     paths = [item["path"] for item in entries if item.get("type") == "blob" and item["path"].startswith(prefix)]
     exact_e2 = f"{character_id}/{character_id}_2.png"
     exact_e0 = f"{character_id}/{character_id}_1.png"
-    if exact_e2 in paths:
-        return exact_e2
     if exact_e0 in paths:
         return exact_e0
+    if exact_e2 in paths:
+        return exact_e2
     clean = [path for path in paths if path.endswith(".png") and not path.endswith("b.png")]
     return clean[0] if clean else None
 
@@ -129,6 +129,44 @@ def collect(root: Path, workers: int = 6) -> list[dict]:
     return records
 
 
+def design_draft(tags: list[str]) -> dict[str, str]:
+    groups = {
+        "outer": ("coat", "jacket", "cloak", "cape", "blazer", "vest", "hood"),
+        "inner": ("shirt", "dress", "sweater", "uniform", "suit", "collar", "tie"),
+        "lower": ("skirt", "pants", "shorts", "leggings", "stockings", "socks"),
+        "footwear": ("boots", "shoes", "footwear"),
+        "accessories": ("belt", "gloves", "scarf", "ribbon", "hat", "headwear", "earrings", "jewelry", "goggles", "eyewear", "bracelet", "weapon"),
+    }
+    found = {name: [tag for tag in tags if any(word in tag for word in words)] for name, words in groups.items()}
+    layers = []
+    for label, key in (("外層", "outer"), ("內層", "inner"), ("下裝", "lower"), ("鞋履", "footwear")):
+        if found[key]:
+            layers.append(f"{label}: {', '.join(found[key][:5])}")
+    points = [tag for tag in tags if any(word in tag for word in ("asym", "layer", "sleeve", "color", "trim", "pattern", "armor", "mechanical"))]
+    return {
+        "structure": "；".join(layers) or "待校對：未可靠辨識服裝分層",
+        "design_points": ", ".join(points[:8]) or "待校對：輪廓、剪裁與配色節奏",
+        "materials": ", ".join(found["accessories"][:10]) or "待校對：主要配件與材質",
+    }
+
+
+def analyze_downloads(root: Path, records: list[dict]) -> list[dict]:
+    from .captioner import WDTagger
+
+    tagger = WDTagger(root / "cache" / "wd-tagger")
+    image_root = root / "datasets" / "arknights_top50" / "curation"
+    for record in records:
+        if record.get("status") != "downloaded":
+            continue
+        raw = tagger.caption(image_root / record["filename"], "arknights_portrait_style")
+        tags = [item.strip() for item in raw.split(",")][2:]
+        record["auto_tags"] = tags
+        record["analysis"] = design_draft(tags)
+    manifest = root / "state" / "arknights_top50_curation.json"
+    manifest.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
+    return records
+
+
 def update_record(root: Path, rank: int, **changes: object) -> dict:
     path = root / "state" / "arknights_top50_curation.json"
     records = json.loads(path.read_text(encoding="utf-8"))
@@ -186,8 +224,11 @@ def accept_record(root: Path, rank: int, answers: dict[str, str], training_filen
 def main() -> None:
     parser = argparse.ArgumentParser(description="Collect traceable Arknights top-50 character art")
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[2])
+    parser.add_argument("--analyze", action="store_true")
     args = parser.parse_args()
     records = collect(args.root.resolve())
+    if args.analyze:
+        records = analyze_downloads(args.root.resolve(), records)
     counts = {status: sum(item["status"] == status for item in records) for status in {item["status"] for item in records}}
     print(json.dumps(counts, ensure_ascii=False))
 

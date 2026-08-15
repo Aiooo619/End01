@@ -147,6 +147,10 @@ class CurationModal(discord.ui.Modal, title="確認角色與服裝標註"):
         self.record = record
         self.focus = focus
         self.form.default = record["preferred"]
+        analysis = record.get("analysis", {})
+        self.structure.default = analysis.get("structure", "")[:500]
+        self.materials.default = analysis.get("materials", "")[:500]
+        self.notes.default = f"自動設計點：{analysis.get('design_points', '待校對')}"[:500]
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         if not self.style_bot.is_allowed(interaction.user.id):
@@ -278,7 +282,11 @@ class StyleBot(commands.Bot):
             warning = " · ".join(flags) or "標準角色素材"
             message = await channel.send(
                 f"**#{record['rank']} {record['group']}** · `{record['preferred']}`\n"
-                f"{warning}\n來源：公開遊戲資源鏡像；請人工確認身份與服裝內容。",
+                f"{warning}\n"
+                f"**自動分層：** {record.get('analysis', {}).get('structure', '待分析')}\n"
+                f"**設計點：** {record.get('analysis', {}).get('design_points', '待分析')}\n"
+                f"**配件：** {record.get('analysis', {}).get('materials', '待分析')}\n"
+                "來源：公開遊戲資源鏡像；你只需校對並選最佳學習部分。",
                 file=discord.File(root / record["filename"]),
                 view=CurationView(self, record),
             )
